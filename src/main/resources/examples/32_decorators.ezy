@@ -1,0 +1,30 @@
+// 데코레이터 - @getter, @setter, @data
+
+// @getter: 자동으로 getter 메서드 생성
+// @setter: 자동으로 setter 메서드 생성
+@getter
+@setter
+class User(name: string, email: string) {
+}
+
+user: User = new User("홍길동", "hong@example.com")
+println("=== @getter / @setter ===")
+println("이름: ${user.getName()}")
+println("이메일: ${user.getEmail()}")
+user.setName("김영희")
+println("변경 후: ${user.getName()}")
+
+// @data = @getter + @setter + toString + equals + copy
+@data
+class Point(x: number, y: number) {
+}
+
+p1: Point = new Point(10, 20)
+p2: Point = new Point(10, 20)
+p3: Point = p1.copy()
+
+println("\n=== @data ===")
+println("p1: ${p1}")
+println("p2: ${p2}")
+println("p1 == p2: ${p1 == p2}")
+println("p3: ${p3}")

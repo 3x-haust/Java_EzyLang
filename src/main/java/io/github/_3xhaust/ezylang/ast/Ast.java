@@ -42,6 +42,15 @@ public class Ast {
         R visitIncrementDecrementExpr(IncrementDecrementExpr incrementDecrementExpr) throws ParseException;
         R visitTestBlock(TestBlock testBlock) throws ParseException;
         R visitAssertStatement(AssertStatement assertStatement) throws ParseException;
+        R visitClassDecl(ClassDecl classDecl) throws ParseException;
+        R visitInterfaceDecl(InterfaceDecl interfaceDecl) throws ParseException;
+        R visitNewExpr(NewExpr newExpr) throws ParseException;
+        R visitSelfExpr(SelfExpr selfExpr) throws ParseException;
+        R visitParentExpr(ParentExpr parentExpr) throws ParseException;
+        R visitPropertyAccess(PropertyAccess propertyAccess) throws ParseException;
+        R visitPropertyAssign(PropertyAssign propertyAssign) throws ParseException;
+        R visitDecoratorDecl(DecoratorDecl decoratorDecl) throws ParseException;
+        R visitEntryBlock(EntryBlock entryBlock) throws ParseException;
     }
 
     @Getter
@@ -327,11 +336,14 @@ public class Ast {
         private final Token returnType;
         private final Boolean isReturnTypeArray;
         private final boolean isMemo;
+        private final boolean isOverride;
+        private final List<Decorator> decorators;
         private final Node body;
-        public FunctionDecl(String name, List<String> paramNames, List<Token> paramTypes, List<Boolean> isArrayTypes, Token returnType, Boolean isReturnTypeArray, boolean isMemo, Node body, int line, int column) {
+        public FunctionDecl(String name, List<String> paramNames, List<Token> paramTypes, List<Boolean> isArrayTypes, Token returnType, Boolean isReturnTypeArray, boolean isMemo, boolean isOverride, List<Decorator> decorators, Node body, int line, int column) {
             this.name = name; this.paramNames = paramNames; this.paramTypes = paramTypes;
             this.isArrayTypes = isArrayTypes; this.returnType = returnType;
             this.isReturnTypeArray = isReturnTypeArray; this.isMemo = isMemo;
+            this.isOverride = isOverride; this.decorators = decorators;
             this.body = body; this.line = line; this.column = column;
         }
         @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitFunctionDecl(this); }
@@ -448,5 +460,137 @@ public class Ast {
             this.expression = expression; this.line = line; this.column = column;
         }
         @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitAssertStatement(this); }
+    }
+
+    @Getter
+    public static class ClassField {
+        private final String name;
+        private final Token type;
+        private final boolean isArray;
+        private final Node defaultValue;
+        private final List<Decorator> decorators;
+        public ClassField(String name, Token type, boolean isArray, Node defaultValue, List<Decorator> decorators) {
+            this.name = name; this.type = type; this.isArray = isArray;
+            this.defaultValue = defaultValue; this.decorators = decorators;
+        }
+    }
+
+    @Getter
+    public static class Decorator {
+        private final String name;
+        private final List<Node> arguments;
+        public Decorator(String name, List<Node> arguments, int line, int column) {
+            this.name = name; this.arguments = arguments;
+        }
+    }
+
+    @Getter
+    public static class ClassDecl extends Node {
+        private final String name;
+        private final List<ClassField> constructorParams;
+        private final String parentClass;
+        private final List<Node> parentArgs;
+        private final List<String> interfaces;
+        private final List<ClassField> fields;
+        private final List<FunctionDecl> methods;
+        private final List<Decorator> decorators;
+        public ClassDecl(String name, List<ClassField> constructorParams, String parentClass, List<Node> parentArgs,
+                         List<String> interfaces, List<ClassField> fields, List<FunctionDecl> methods,
+                         List<Decorator> decorators, int line, int column) {
+            this.name = name; this.constructorParams = constructorParams;
+            this.parentClass = parentClass; this.parentArgs = parentArgs;
+            this.interfaces = interfaces; this.fields = fields; this.methods = methods;
+            this.decorators = decorators; this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitClassDecl(this); }
+    }
+
+    @Getter
+    public static class InterfaceDecl extends Node {
+        private final String name;
+        private final List<FunctionDecl> methods;
+        public InterfaceDecl(String name, List<FunctionDecl> methods, int line, int column) {
+            this.name = name; this.methods = methods;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitInterfaceDecl(this); }
+    }
+
+    @Getter
+    public static class NewExpr extends Node {
+        private final String className;
+        private final List<Node> arguments;
+        public NewExpr(String className, List<Node> arguments, int line, int column) {
+            this.className = className; this.arguments = arguments;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitNewExpr(this); }
+    }
+
+    @Getter
+    public static class SelfExpr extends Node {
+        private final String fieldName;
+        public SelfExpr(String fieldName, int line, int column) {
+            this.fieldName = fieldName; this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitSelfExpr(this); }
+    }
+
+    @Getter
+    public static class ParentExpr extends Node {
+        private final String methodName;
+        private final List<Node> arguments;
+        public ParentExpr(String methodName, List<Node> arguments, int line, int column) {
+            this.methodName = methodName; this.arguments = arguments;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitParentExpr(this); }
+    }
+
+    @Getter
+    public static class PropertyAccess extends Node {
+        private final Node object;
+        private final String property;
+        public PropertyAccess(Node object, String property, int line, int column) {
+            this.object = object; this.property = property;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitPropertyAccess(this); }
+    }
+
+    @Getter
+    public static class PropertyAssign extends Node {
+        private final Node object;
+        private final String property;
+        private final Token operator;
+        private final Node value;
+        public PropertyAssign(Node object, String property, Token operator, Node value, int line, int column) {
+            this.object = object; this.property = property;
+            this.operator = operator; this.value = value;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitPropertyAssign(this); }
+    }
+
+    @Getter
+    public static class DecoratorDecl extends Node {
+        private final String name;
+        private final List<String> paramNames;
+        private final List<Token> paramTypes;
+        private final Node body;
+        public DecoratorDecl(String name, List<String> paramNames, List<Token> paramTypes, Node body, int line, int column) {
+            this.name = name; this.paramNames = paramNames; this.paramTypes = paramTypes;
+            this.body = body; this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitDecoratorDecl(this); }
+    }
+
+    @Getter
+    public static class EntryBlock extends Node {
+        private final Node body;
+        public EntryBlock(Node body, int line, int column) {
+            this.body = body; this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitEntryBlock(this); }
     }
 }

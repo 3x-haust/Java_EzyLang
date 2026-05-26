@@ -1,0 +1,42 @@
+// 인터페이스 - 규약 정의 및 구현
+
+interface Displayable {
+    func display(): string
+}
+
+interface Saveable {
+    func save(): string
+}
+
+// 인터페이스 구현
+class Document(title: string, content: string) : Displayable, Saveable {
+    func display(): string {
+        return "[문서] ${self.title}: ${self.content}"
+    }
+
+    func save(): string {
+        return "${self.title} 저장 완료"
+    }
+}
+
+class Photo(filename: string) : Displayable {
+    func display(): string {
+        return "[사진] ${self.filename}"
+    }
+}
+
+doc: Document = new Document("보고서", "월간 실적 보고")
+photo: Photo = new Photo("vacation.jpg")
+
+println("=== 출력 ===")
+println(doc.display())
+println(photo.display())
+
+println("\n=== 저장 ===")
+println(doc.save())
+
+println("\n=== 인터페이스 타입 체크 ===")
+println("doc is Displayable: ${doc is Displayable}")
+println("doc is Saveable: ${doc is Saveable}")
+println("photo is Displayable: ${photo is Displayable}")
+println("photo is Saveable: ${photo is Saveable}")

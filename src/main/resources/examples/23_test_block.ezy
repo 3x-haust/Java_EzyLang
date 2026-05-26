@@ -1,5 +1,5 @@
-// test 블록
-// test "이름" { assert ... } 문법으로 단위 테스트를 작성한다
+// @test 데코레이터
+// @test("이름") 데코레이터를 함수에 붙여 단위 테스트를 작성한다
 
 func add(a: number, b: number): number {
     return a + b
@@ -16,28 +16,32 @@ func factorial(n: number): number {
 
 println("add(3, 4) = ${add(3, 4)}")
 
-// test 블록: assert가 실패하면 에러를 출력하고 테스트를 종료
-test "덧셈 테스트" {
+// @test 데코레이터: assert가 실패하면 에러를 출력하고 테스트를 종료
+@test("덧셈 테스트")
+func testAdd(): void {
     assert add(1, 2) == 3
     assert add(0, 0) == 0
     assert add(-1, 1) == 0
     assert add(100, 200) == 300
 }
 
-test "곱셈 테스트" {
+@test("곱셈 테스트")
+func testMultiply(): void {
     assert multiply(3, 4) == 12
     assert multiply(0, 5) == 0
     assert multiply(-2, 3) == -6
 }
 
-test "팩토리얼 테스트" {
+@test("팩토리얼 테스트")
+func testFactorial(): void {
     assert factorial(1) == 1
     assert factorial(5) == 120
     assert factorial(10) == 3628800
 }
 
 // 연산자 표현식도 assert로 검증 가능
-test "비교 연산 테스트" {
+@test("비교 연산 테스트")
+func testComparison(): void {
     assert 1 < 2
     assert 10 >= 10
     assert 5 != 3

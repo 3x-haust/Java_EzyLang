@@ -1,0 +1,49 @@
+// 상속 - 부모 클래스 확장, override, parent 키워드
+
+class Animal(name: string, age: number) {
+    func speak(): string {
+        return "${self.name}이(가) 소리를 냅니다"
+    }
+
+    func info(): string {
+        return "${self.name} (${self.age}살)"
+    }
+}
+
+class Dog(name: string, age: number, breed: string = "믹스")
+    : Animal(name, age) {
+
+    @override
+    func speak(): string {
+        return "${self.name}: 멍멍!"
+    }
+
+    func fullInfo(): string {
+        return "${parent.info()} - ${self.breed}"
+    }
+}
+
+class Cat(name: string, age: number) : Animal(name, age) {
+    @override
+    func speak(): string {
+        return "${self.name}: 야옹~"
+    }
+}
+
+// 인스턴스 생성 및 사용
+dog: Dog = new Dog("바둑이", 3)
+cat: Cat = new Cat("나비", 2)
+
+println("=== 동물 소리 ===")
+println(dog.speak())
+println(cat.speak())
+
+println("\n=== 상세 정보 ===")
+println(dog.fullInfo())
+println(cat.info())
+
+// 타입 체크 (is 연산자)
+println("\n=== 타입 체크 ===")
+println("dog is Animal: ${dog is Animal}")
+println("dog is Dog: ${dog is Dog}")
+println("cat is Dog: ${cat is Dog}")

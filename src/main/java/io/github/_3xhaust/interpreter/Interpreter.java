@@ -15,16 +15,17 @@ import io.github._3xhaust.ezylang.exception.ParseException;
 import io.github._3xhaust.ezylang.lexer.Lexer;
 import io.github._3xhaust.ezylang.lexer.Token;
 import io.github._3xhaust.ezylang.parser.Parser;
-import io.github._3xhaust.interpreter.module.ArrModule;
-import io.github._3xhaust.interpreter.module.MathModule;
-import io.github._3xhaust.interpreter.module.NativeFunction;
-import io.github._3xhaust.interpreter.module.StrModule;
+import io.github._3xhaust.interpreter.module.*;
+
+import io.github._3xhaust.interpreter.runtime.EzyClass;
+import io.github._3xhaust.interpreter.runtime.EzyInstance;
+import io.github._3xhaust.interpreter.runtime.EzyInterface;
 
 public class Interpreter implements Visitor<Object> {
     private final Map<String, FunctionDecl> functions = new HashMap<>();
     private final Map<String, NativeFunction> nativeFunctions = new HashMap<>();
     private final Map<String, Interpreter> loadedModules = new HashMap<>();
-    private static final java.util.Set<String> BUILTIN_MODULES = java.util.Set.of("math", "str", "arr");
+    private static final java.util.Set<String> BUILTIN_MODULES = java.util.Set.of("math", "str", "arr", "io", "os", "time", "http", "net", "json");
     private final String fileName;
     private final List<String> lines;
     private final Environment env = new Environment();
@@ -32,6 +33,12 @@ public class Interpreter implements Visitor<Object> {
     private final java.util.Set<String> importedModules = new java.util.HashSet<>();
     private static final Double[] DOUBLE_CACHE = new Double[256];
     static { for (int i = 0; i < 256; i++) DOUBLE_CACHE[i] = (double) i; }
+    private final Map<String, EzyClass> classes = new HashMap<>();
+    private final Map<String, EzyInterface> interfaces = new HashMap<>();
+    private final Map<String, DecoratorDecl> customDecorators = new HashMap<>();
+    private EzyInstance currentInstance = null;
+    private EzyClass currentClass = null;
+    private boolean isModule = false;
     private boolean testMode = false;
     private int testsPassed = 0;
     private int testsFailed = 0;
@@ -48,14 +55,41 @@ public class Interpreter implements Visitor<Object> {
 
     public void interpret(Program program) throws ParseException {
         for (Node statement : program.getStatements()) {
-            if (statement instanceof FunctionDecl) {
+            if (statement instanceof FunctionDecl || statement instanceof ClassDecl
+                    || statement instanceof InterfaceDecl || statement instanceof DecoratorDecl) {
                 statement.accept(this);
             }
         }
 
         for (Node statement : program.getStatements()) {
-            if (!(statement instanceof FunctionDecl)) {
+            if (!(statement instanceof FunctionDecl) && !(statement instanceof ClassDecl)
+                    && !(statement instanceof InterfaceDecl) && !(statement instanceof DecoratorDecl)) {
                 statement.accept(this);
+            }
+        }
+
+        if (testMode) {
+            for (Map.Entry<String, FunctionDecl> entry : functions.entrySet()) {
+                FunctionDecl func = entry.getValue();
+                if (hasDecorator(func, "test")) {
+                    String testName = getDecoratorStringArg(func, "test");
+                    if (testName == null) testName = entry.getKey();
+                    try {
+                        enterScope();
+                        func.getBody().accept(this);
+                        exitScope();
+                        testsPassed++;
+                        System.out.println("[PASS] " + testName);
+                    } catch (AssertionFailedException e) {
+                        exitScope();
+                        testsFailed++;
+                        System.out.println("[FAIL] " + testName + " - " + e.getMessage());
+                    } catch (ReturnException e) {
+                        exitScope();
+                        testsPassed++;
+                        System.out.println("[PASS] " + testName);
+                    }
+                }
             }
         }
     }
@@ -66,6 +100,14 @@ public class Interpreter implements Visitor<Object> {
         }
 
         try {
+            if (BUILTIN_MODULES.contains(moduleName)) {
+                Interpreter moduleInterpreter = new Interpreter(moduleName + ".ezy", "");
+                moduleInterpreter.isModule = true;
+                registerModuleNatives(moduleName, moduleInterpreter);
+                loadedModules.put(moduleName, moduleInterpreter);
+                return moduleInterpreter;
+            }
+
             String moduleFileName = moduleName + ".ezy";
             String sourceCode;
             String modulePath;
@@ -77,11 +119,7 @@ public class Interpreter implements Visitor<Object> {
                 sourceCode = new String(Files.readAllBytes(localPath));
                 modulePath = localPath.toString();
             } else {
-                java.io.InputStream is = getClass().getResourceAsStream("/" + moduleFileName);
-                if (is == null) throw new Exception("Module '" + moduleName + "' not found");
-                sourceCode = new String(is.readAllBytes());
-                is.close();
-                modulePath = moduleFileName;
+                throw new Exception("Module '" + moduleName + "' not found");
             }
 
             Lexer lexer = new Lexer(sourceCode);
@@ -90,6 +128,7 @@ public class Interpreter implements Visitor<Object> {
             Program program = parser.parse();
 
             Interpreter moduleInterpreter = new Interpreter(modulePath, sourceCode);
+            moduleInterpreter.isModule = true;
             registerModuleNatives(moduleName, moduleInterpreter);
             moduleInterpreter.interpret(program);
             loadedModules.put(moduleName, moduleInterpreter);
@@ -112,6 +151,35 @@ public class Interpreter implements Visitor<Object> {
             }
             case "str" -> StrModule.register(moduleInterpreter.nativeFunctions);
             case "arr" -> ArrModule.register(moduleInterpreter.nativeFunctions);
+            case "io" -> IoModule.register(moduleInterpreter.nativeFunctions);
+            case "os" -> {
+                OsModule.register(moduleInterpreter.nativeFunctions);
+                OsModule.registerConstants(moduleInterpreter.env.getGlobalConstantScope());
+            }
+            case "time" -> TimeModule.register(moduleInterpreter.nativeFunctions);
+            case "http" -> {
+                HttpModule.register(moduleInterpreter.nativeFunctions);
+                HttpModule.setDispatcher(args -> {
+                    String funcName = String.valueOf(args.get(0));
+                    FunctionDecl func = functions.get(funcName);
+                    if (func == null) throw error(null, "Handler function '" + funcName + "' not found");
+                    enterScope();
+                    try {
+                        List<String> paramNames = func.getParamNames();
+                        for (int i = 0; i < paramNames.size(); i++) {
+                            setVariable(paramNames.get(i), i + 1 < args.size() ? args.get(i + 1) : null);
+                        }
+                        func.getBody().accept(this);
+                    } catch (ReturnException e) {
+                        return e.getValue();
+                    } finally {
+                        exitScope();
+                    }
+                    return null;
+                });
+            }
+            case "net" -> NetModule.register(moduleInterpreter.nativeFunctions);
+            case "json" -> JsonModule.register(moduleInterpreter.nativeFunctions);
         }
     }
 
@@ -121,6 +189,9 @@ public class Interpreter implements Visitor<Object> {
             if (d == Math.floor(d) && !Double.isInfinite(d) && Math.abs(d) < 1e15) {
                 return String.valueOf(d.longValue());
             }
+        }
+        if (value instanceof EzyInstance instance) {
+            return instance.toString();
         }
         return String.valueOf(value);
     }
@@ -397,12 +468,25 @@ public class Interpreter implements Visitor<Object> {
             evaluatedArgs.add(arg.accept(this));
         }
 
-        if (function.isMemo()) {
+        boolean isMemo = function.isMemo() || hasDecorator(function, "memo");
+        boolean isLog = hasDecorator(function, "log");
+        boolean isTimer = hasDecorator(function, "timer");
+
+        if (hasDecorator(function, "deprecated")) {
+            String msg = getDecoratorStringArg(function, "deprecated");
+            System.out.println("[WARNING] " + name + " is deprecated" + (msg != null ? ": " + msg : ""));
+        }
+
+        handleGuardDecorators(function, evaluatedArgs, functionCall);
+
+        if (isMemo) {
             Map<List<Object>, Object> cache = memoCache.computeIfAbsent(name, k -> new HashMap<>());
             if (cache.containsKey(evaluatedArgs)) {
                 return cache.get(evaluatedArgs);
             }
         }
+
+        long startTime = isTimer ? System.currentTimeMillis() : 0;
 
         enterScope();
         try {
@@ -411,7 +495,8 @@ public class Interpreter implements Visitor<Object> {
                 String expectedType = paramTypes.get(i).getValue();
                 boolean isArray = isArrayTypes.get(i);
 
-                if (isArray && !(value instanceof List<?>)) {
+                if (classes.containsKey(expectedType) || interfaces.containsKey(expectedType)) {
+                } else if (isArray && !(value instanceof List<?>)) {
                     throw error(functionCall, "Expected '" + expectedType + "[]' but got '" + getTypeName(value) + "'");
                 } else if (!isArray && value instanceof List<?>) {
                     throw error(functionCall, "Expected '" + expectedType + "' but got array");
@@ -423,16 +508,73 @@ public class Interpreter implements Visitor<Object> {
 
             try {
                 Object result = function.getBody().accept(this);
-                if (function.isMemo()) memoCache.get(name).put(evaluatedArgs, result);
+                if (isMemo) memoCache.computeIfAbsent(name, k -> new HashMap<>()).put(evaluatedArgs, result);
+                if (isLog) printLog(name, evaluatedArgs, result);
+                if (isTimer) printTimer(name, startTime);
                 return result;
             } catch (ReturnException returnEx) {
                 Object value = returnEx.getValue();
-                if (function.isMemo()) memoCache.get(name).put(evaluatedArgs, value);
+                if (isMemo) memoCache.computeIfAbsent(name, k -> new HashMap<>()).put(evaluatedArgs, value);
+                if (isLog) printLog(name, evaluatedArgs, value);
+                if (isTimer) printTimer(name, startTime);
                 return value;
             }
         } finally {
             exitScope();
         }
+    }
+
+    private boolean hasDecorator(FunctionDecl func, String name) {
+        if (func.getDecorators() == null) return false;
+        return func.getDecorators().stream().anyMatch(d -> d.getName().equals(name));
+    }
+
+    private String getDecoratorStringArg(FunctionDecl func, String decName) {
+        if (func.getDecorators() == null) return null;
+        for (Decorator d : func.getDecorators()) {
+            if (d.getName().equals(decName) && !d.getArguments().isEmpty()) {
+                Node arg = d.getArguments().get(0);
+                if (arg instanceof Literal lit) return String.valueOf(lit.getValue());
+            }
+        }
+        return null;
+    }
+
+    private void handleGuardDecorators(FunctionDecl func, List<Object> args, Node errorNode) throws ParseException {
+        if (func.getDecorators() == null) return;
+        for (Decorator dec : func.getDecorators()) {
+            if (dec.getName().equals("guard") && dec.getArguments().size() >= 2) {
+                enterScope();
+                try {
+                    List<String> paramNames = func.getParamNames();
+                    for (int i = 0; i < paramNames.size(); i++) {
+                        setVariable(paramNames.get(i), i < args.size() ? args.get(i) : null);
+                    }
+                    Object condition = dec.getArguments().get(0).accept(this);
+                    if (condition instanceof Boolean && !(Boolean) condition) {
+                        Object msg = dec.getArguments().get(1).accept(this);
+                        throw error(errorNode, String.valueOf(msg));
+                    }
+                } finally {
+                    exitScope();
+                }
+            }
+        }
+    }
+
+    private void printLog(String name, List<Object> args, Object result) {
+        StringBuilder sb = new StringBuilder("[LOG] " + name + "(");
+        for (int i = 0; i < args.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(formatValue(args.get(i)));
+        }
+        sb.append(") → ").append(formatValue(result));
+        System.out.println(sb);
+    }
+
+    private void printTimer(String name, long startTime) {
+        long elapsed = System.currentTimeMillis() - startTime;
+        System.out.println("[TIMER] " + name + ": " + elapsed + "ms");
     }
 
     private static class ReturnException extends RuntimeException {
@@ -591,12 +733,52 @@ public class Interpreter implements Visitor<Object> {
         if (objectName != null) {
             object = findVariable(objectName);
             if (object == null) {
+                object = findConstant(objectName);
+            }
+            if (object == null) {
                 throw error(methodCall, "Undefined variable '" + objectName + "'");
             }
         } else if (objectNode != null) {
             object = objectNode.accept(this);
         } else {
             throw error(methodCall, "No object specified for method call");
+        }
+
+        if (object instanceof EzyInstance instance) {
+            List<Object> args = new ArrayList<>();
+            for (Node arg : arguments) {
+                args.add(arg.accept(this));
+            }
+
+            if (methodName.equals("copy") && instance.getEzyClass().hasDecorator("data")) {
+                return instance.copy();
+            }
+
+            if (methodName.startsWith("get") && methodName.length() > 3) {
+                String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
+                EzyClass cls = instance.getEzyClass();
+                if ((cls.hasDecorator("getter") || cls.hasDecorator("data")) && instance.hasField(fieldName)) {
+                    return instance.getField(fieldName);
+                }
+            }
+            if (methodName.startsWith("set") && methodName.length() > 3 && args.size() == 1) {
+                String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
+                EzyClass cls = instance.getEzyClass();
+                if ((cls.hasDecorator("setter") || cls.hasDecorator("data")) && instance.hasField(fieldName)) {
+                    instance.setField(fieldName, args.get(0));
+                    return null;
+                }
+            }
+
+            if (methodName.equals("toString") && (instance.getEzyClass().hasDecorator("data") || instance.getEzyClass().hasDecorator("toString"))) {
+                return instance.toString();
+            }
+
+            FunctionDecl method = instance.getEzyClass().findMethod(methodName);
+            if (method != null) {
+                return callMethod(instance, method, args, instance.getEzyClass(), methodCall);
+            }
+
         }
 
         if (methodName.equals("length") && (object instanceof List<?> || object instanceof String)) {
@@ -1155,7 +1337,15 @@ public class Interpreter implements Visitor<Object> {
             case "char" -> value instanceof Character;
             case "array" -> value instanceof List;
             case "null" -> value == null;
-            default -> throw error(expr, "Unknown type: " + targetType);
+            default -> {
+                if (value instanceof EzyInstance instance) {
+                    EzyClass cls = classes.get(targetType);
+                    if (cls != null) yield instance.isInstanceOf(cls);
+                    EzyInterface iface = interfaces.get(targetType);
+                    if (iface != null) yield instance.isInstanceOfInterface(targetType);
+                }
+                throw error(expr, "Unknown type: " + targetType);
+            }
         };
     }
 
@@ -1282,4 +1472,352 @@ public class Interpreter implements Visitor<Object> {
         }
         return null;
     }
+
+
+    @Override
+    public Object visitClassDecl(ClassDecl classDecl) throws ParseException {
+        String name = classDecl.getName();
+        EzyClass parentEzyClass = null;
+
+        if (classDecl.getParentClass() != null) {
+            parentEzyClass = classes.get(classDecl.getParentClass());
+            if (parentEzyClass == null) {
+                throw error(classDecl, "Undefined parent class '" + classDecl.getParentClass() + "'");
+            }
+        }
+
+        for (String ifaceName : classDecl.getInterfaces()) {
+            if (!interfaces.containsKey(ifaceName)) {
+                throw error(classDecl, "Undefined interface '" + ifaceName + "'");
+            }
+        }
+
+        EzyClass ezyClass = new EzyClass(name, classDecl.getConstructorParams(), parentEzyClass,
+                classDecl.getInterfaces(), classDecl.getFields(), classDecl.getMethods(),
+                classDecl.getDecorators());
+
+        for (FunctionDecl method : classDecl.getMethods()) {
+            boolean isOverride = method.isOverride() || hasDecorator(method, "override");
+            if (isOverride) {
+                if (parentEzyClass == null || parentEzyClass.findMethod(method.getName()) == null) {
+                    throw error(method, "Method '" + method.getName() + "' is marked @override but no parent method found");
+                }
+            } else if (parentEzyClass != null && parentEzyClass.findMethod(method.getName()) != null) {
+                throw error(method, "'" + method.getName() + "' already exists in parent class '" + parentEzyClass.getName() + "'. Use '@override' to redefine.");
+            }
+        }
+
+        for (String ifaceName : classDecl.getInterfaces()) {
+            EzyInterface iface = interfaces.get(ifaceName);
+            for (FunctionDecl ifaceMethod : iface.getMethods()) {
+                if (ezyClass.findMethod(ifaceMethod.getName()) == null) {
+                    throw error(classDecl, "Class '" + name + "' must implement method '" + ifaceMethod.getName() + "' from interface '" + ifaceName + "'");
+                }
+            }
+        }
+
+        classes.put(name, ezyClass);
+        return null;
+    }
+
+    @Override
+    public Object visitInterfaceDecl(InterfaceDecl interfaceDecl) throws ParseException {
+        interfaces.put(interfaceDecl.getName(), new EzyInterface(interfaceDecl.getName(), interfaceDecl.getMethods()));
+        return null;
+    }
+
+    @Override
+    public Object visitNewExpr(NewExpr newExpr) throws ParseException {
+        String className = newExpr.getClassName();
+        EzyClass ezyClass = classes.get(className);
+        if (ezyClass == null) {
+            throw error(newExpr, "Undefined class '" + className + "'");
+        }
+
+        List<Object> args = new ArrayList<>();
+        for (Node arg : newExpr.getArguments()) {
+            args.add(arg.accept(this));
+        }
+
+        return instantiateClass(ezyClass, args, newExpr);
+    }
+
+    private EzyInstance instantiateClass(EzyClass ezyClass, List<Object> args, Node errorNode) throws ParseException {
+        EzyInstance instance = new EzyInstance(ezyClass);
+
+        if (ezyClass.getParentClass() != null) {
+        }
+
+        List<ClassField> params = ezyClass.getConstructorParams();
+        int requiredParams = 0;
+        for (ClassField p : params) {
+            if (p.getDefaultValue() == null) requiredParams++;
+        }
+
+        if (args.size() < requiredParams || args.size() > params.size()) {
+            throw error(errorNode, "Expected " + (requiredParams == params.size() ? String.valueOf(requiredParams) : requiredParams + "-" + params.size())
+                    + " arguments but got " + args.size());
+        }
+
+        for (int i = 0; i < params.size(); i++) {
+            ClassField param = params.get(i);
+            Object value;
+            if (i < args.size()) {
+                value = args.get(i);
+            } else if (param.getDefaultValue() != null) {
+                value = param.getDefaultValue().accept(this);
+            } else {
+                throw error(errorNode, "Missing argument for parameter '" + param.getName() + "'");
+            }
+            instance.setField(param.getName(), value);
+        }
+
+        EzyInstance prevInstance = currentInstance;
+        EzyClass prevClass = currentClass;
+        currentInstance = instance;
+        currentClass = ezyClass;
+        try {
+            for (ClassField field : ezyClass.getFields()) {
+                if (field.getDefaultValue() != null) {
+                    instance.setField(field.getName(), field.getDefaultValue().accept(this));
+                } else {
+                    instance.setField(field.getName(), null);
+                }
+            }
+        } finally {
+            currentInstance = prevInstance;
+            currentClass = prevClass;
+        }
+
+        if (ezyClass.getParentClass() != null) {
+            EzyClass parent = ezyClass.getParentClass();
+            for (ClassField pf : parent.getConstructorParams()) {
+                if (!instance.hasField(pf.getName())) {
+                    instance.setField(pf.getName(), null);
+                }
+            }
+            for (ClassField pf : parent.getFields()) {
+                if (!instance.hasField(pf.getName())) {
+                    if (pf.getDefaultValue() != null) {
+                        EzyInstance prev = currentInstance;
+                        EzyClass prevC = currentClass;
+                        currentInstance = instance;
+                        currentClass = parent;
+                        try {
+                            instance.setField(pf.getName(), pf.getDefaultValue().accept(this));
+                        } finally {
+                            currentInstance = prev;
+                            currentClass = prevC;
+                        }
+                    } else {
+                        instance.setField(pf.getName(), null);
+                    }
+                }
+            }
+        }
+
+
+        return instance;
+    }
+
+    @Override
+    public Object visitSelfExpr(SelfExpr selfExpr) throws ParseException {
+        if (currentInstance == null) {
+            throw error(selfExpr, "'self' can only be used inside a class method");
+        }
+        if (selfExpr.getFieldName() != null) {
+            return currentInstance.getField(selfExpr.getFieldName());
+        }
+        return currentInstance;
+    }
+
+    @Override
+    public Object visitParentExpr(ParentExpr parentExpr) throws ParseException {
+        if (currentInstance == null || currentClass == null) {
+            throw error(parentExpr, "'parent' can only be used inside a class method");
+        }
+        EzyClass parent = currentClass.getParentClass();
+        if (parent == null) {
+            throw error(parentExpr, "Class '" + currentClass.getName() + "' has no parent class");
+        }
+
+        String methodName = parentExpr.getMethodName();
+        FunctionDecl method = parent.findMethod(methodName);
+        if (method == null) {
+            throw error(parentExpr, "Method '" + methodName + "' not found in parent class '" + parent.getName() + "'");
+        }
+
+        List<Object> args = new ArrayList<>();
+        for (Node arg : parentExpr.getArguments()) {
+            args.add(arg.accept(this));
+        }
+
+        return callMethod(currentInstance, method, args, parent, parentExpr);
+    }
+
+    @Override
+    public Object visitPropertyAccess(PropertyAccess propertyAccess) throws ParseException {
+        if (propertyAccess.getObject() instanceof Identifier id && importedModules.contains(id.getName())) {
+            String moduleName = id.getName();
+            Interpreter module = loadedModules.get(moduleName);
+            if (module == null) {
+                throw error(propertyAccess, "Module '" + moduleName + "' not loaded");
+            }
+            String property = propertyAccess.getProperty();
+            if (module.env.getGlobalConstantScope().containsKey(property)) {
+                return module.env.getGlobalConstantScope().get(property);
+            }
+            if (module.env.getGlobalVariableScope().containsKey(property)) {
+                return module.env.getGlobalVariableScope().get(property);
+            }
+            throw error(propertyAccess, "Property '" + property + "' not found in module '" + moduleName + "'");
+        }
+
+        Object object = propertyAccess.getObject().accept(this);
+        String property = propertyAccess.getProperty();
+
+        if (object instanceof EzyInstance instance) {
+            if (instance.hasField(property)) {
+                return instance.getField(property);
+            }
+            throw error(propertyAccess, "Property '" + property + "' not found on " + instance.getEzyClass().getName());
+        }
+
+        throw error(propertyAccess, "Cannot access property '" + property + "' on non-object");
+    }
+
+    @Override
+    public Object visitPropertyAssign(PropertyAssign propertyAssign) throws ParseException {
+        Object object = propertyAssign.getObject().accept(this);
+        String property = propertyAssign.getProperty();
+        Object value = propertyAssign.getValue().accept(this);
+        Token operator = propertyAssign.getOperator();
+
+        EzyInstance instance;
+        if (object instanceof EzyInstance inst) {
+            instance = inst;
+        } else {
+            throw error(propertyAssign, "Cannot assign property on non-object");
+        }
+
+        if (operator.getToken() != Token.TokenType.EQUAL) {
+            Object currentValue = instance.getField(property);
+            value = computeCompoundAssignment(currentValue, operator, value, propertyAssign);
+        }
+
+        instance.setField(property, value);
+        return null;
+    }
+
+    private Object computeCompoundAssignment(Object current, Token operator, Object value, Node errorNode) throws ParseException {
+        return switch (operator.getToken()) {
+            case PLUS_EQUAL -> {
+                if (current instanceof Double && value instanceof Double) yield (Double) current + (Double) value;
+                if (current instanceof String || value instanceof String) yield String.valueOf(current) + value;
+                throw error(errorNode, "Invalid operands for '+='");
+            }
+            case MINUS_EQUAL -> {
+                if (current instanceof Double && value instanceof Double) yield (Double) current - (Double) value;
+                throw error(errorNode, "Invalid operands for '-='");
+            }
+            case ASTERISK_EQUAL -> {
+                if (current instanceof Double && value instanceof Double) yield (Double) current * (Double) value;
+                throw error(errorNode, "Invalid operands for '*='");
+            }
+            case SLASH_EQUAL -> {
+                if (current instanceof Double && value instanceof Double) yield (Double) current / (Double) value;
+                throw error(errorNode, "Invalid operands for '/='");
+            }
+            case PERCENT_EQUAL -> {
+                if (current instanceof Double && value instanceof Double) yield (Double) current % (Double) value;
+                throw error(errorNode, "Invalid operands for '%='");
+            }
+            default -> throw error(errorNode, "Invalid assignment operator");
+        };
+    }
+
+    @Override
+    public Object visitDecoratorDecl(DecoratorDecl decoratorDecl) throws ParseException {
+        customDecorators.put(decoratorDecl.getName(), decoratorDecl);
+        return null;
+    }
+
+    @Override
+    public Object visitEntryBlock(EntryBlock entryBlock) throws ParseException {
+        if (!isModule) {
+            entryBlock.getBody().accept(this);
+        }
+        return null;
+    }
+
+    private Object callMethod(EzyInstance instance, FunctionDecl method, List<Object> args, EzyClass methodClass, Node errorNode) throws ParseException {
+        if (method.getDecorators() != null) {
+            for (Decorator dec : method.getDecorators()) {
+                handleMethodDecorator(dec, method, instance, args, errorNode);
+            }
+        }
+
+        EzyInstance prevInstance = currentInstance;
+        EzyClass prevClass = currentClass;
+        currentInstance = instance;
+        currentClass = methodClass;
+        enterScope();
+        try {
+            List<String> paramNames = method.getParamNames();
+            for (int i = 0; i < paramNames.size(); i++) {
+                setVariable(paramNames.get(i), i < args.size() ? args.get(i) : null);
+            }
+            try {
+                return method.getBody().accept(this);
+            } catch (ReturnException e) {
+                return e.getValue();
+            }
+        } finally {
+            exitScope();
+            currentInstance = prevInstance;
+            currentClass = prevClass;
+        }
+    }
+
+    private void handleMethodDecorator(Decorator dec, FunctionDecl method, EzyInstance instance, List<Object> args, Node errorNode) throws ParseException {
+        switch (dec.getName()) {
+            case "guard" -> {
+                if (dec.getArguments().size() >= 2) {
+                    EzyInstance prevInstance = currentInstance;
+                    EzyClass prevClass = currentClass;
+                    currentInstance = instance;
+                    currentClass = instance != null ? instance.getEzyClass() : null;
+                    enterScope();
+                    try {
+                        List<String> paramNames = method.getParamNames();
+                        for (int i = 0; i < paramNames.size(); i++) {
+                            setVariable(paramNames.get(i), i < args.size() ? args.get(i) : null);
+                        }
+                        Object condition = dec.getArguments().get(0).accept(this);
+                        if (condition instanceof Boolean && !(Boolean) condition) {
+                            Object msg = dec.getArguments().get(1).accept(this);
+                            throw error(errorNode, String.valueOf(msg));
+                        }
+                    } finally {
+                        exitScope();
+                        currentInstance = prevInstance;
+                        currentClass = prevClass;
+                    }
+                }
+            }
+            case "log" -> {
+                StringBuilder sb = new StringBuilder("[LOG] " + method.getName() + "(");
+                for (int i = 0; i < args.size(); i++) {
+                    if (i > 0) sb.append(", ");
+                    sb.append(formatValue(args.get(i)));
+                }
+                sb.append(")");
+            }
+            case "deprecated" -> {
+                String msg = dec.getArguments().isEmpty() ? "" : ": " + dec.getArguments().get(0);
+                System.out.println("[WARNING] " + method.getName() + " is deprecated" + msg);
+            }
+        }
+    }
+
 }

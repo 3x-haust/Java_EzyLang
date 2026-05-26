@@ -111,6 +111,17 @@ public class Token {
         TEST,
         ASSERT,
 
+        CLASS,
+        INTERFACE,
+        NEW,
+        SELF,
+        PARENT,
+        OVERRIDE,
+        EXTENDS,
+        DECORATOR,
+        ENTRY,
+        AT,
+
         LEFT_PAREN,
         RIGHT_PAREN,
         LEFT_BRACE,

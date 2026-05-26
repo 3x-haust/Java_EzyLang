@@ -1,0 +1,17 @@
+// entry 블록 - 프로그램 진입점
+// 직접 실행하면 entry 블록이 실행되고, 모듈로 import하면 무시됨
+
+func greet(name: string): string {
+    return "안녕, ${name}!"
+}
+
+func add(a: number, b: number): number {
+    return a + b
+}
+
+entry {
+    println("=== 프로그램 시작 ===")
+    println(greet("EzyLang"))
+    println("1 + 2 = ${add(1, 2)}")
+    println("=== 프로그램 끝 ===")
+}

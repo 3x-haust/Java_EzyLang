@@ -38,8 +38,8 @@ println("strIndexOf Prog: ${r4}")
 sub: string = substring(name, 0, 7)
 println("\nsubstring(0, 7): ${sub}")
 old: string = "Ezy"
-new: string = "Easy"
-replaced: string = replace(name, old, new)
+replacement: string = "Easy"
+replaced: string = replace(name, old, replacement)
 println("replace: ${replaced}")
 rev: string = reverse(name)
 println("reverse: ${rev}")

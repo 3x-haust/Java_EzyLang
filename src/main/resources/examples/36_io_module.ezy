@@ -1,0 +1,30 @@
+// io 모듈 - 파일 읽기/쓰기, 사용자 입력
+
+from io import *
+
+// 파일 쓰기
+writeFile("/tmp/ezy_test.txt", "Hello, EzyLang!\n두 번째 줄")
+println("파일 작성 완료")
+
+// 파일 읽기
+content: string = readFile("/tmp/ezy_test.txt")
+println("내용: ${content}")
+
+// 파일 존재 확인
+println("파일 존재: ${fileExists("/tmp/ezy_test.txt")}")
+println("없는 파일: ${fileExists("/tmp/no_such_file.txt")}")
+
+// 파일 추가 쓰기
+appendFile("/tmp/ezy_test.txt", "\n세 번째 줄")
+println("추가 후: ${readFile("/tmp/ezy_test.txt")}")
+
+// 파일 크기
+println("파일 크기: ${fileSize("/tmp/ezy_test.txt")} bytes")
+
+// 디렉토리 확인
+println("isDir /tmp: ${isDir("/tmp")}")
+println("isFile /tmp: ${isFile("/tmp")}")
+
+// 파일 삭제
+deleteFile("/tmp/ezy_test.txt")
+println("삭제 후 존재: ${fileExists("/tmp/ezy_test.txt")}")

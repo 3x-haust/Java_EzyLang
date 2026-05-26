@@ -1,0 +1,18 @@
+// 커스텀 데코레이터 - decorator 키워드로 직접 만들기
+
+// 실행 횟수를 세는 데코레이터
+decorator counter() {
+    println("[counter] 함수 실행")
+    result: any = call()
+    println("[counter] 실행 완료")
+    return result
+}
+
+@counter
+func sayHello(name: string): string {
+    return "Hello, ${name}!"
+}
+
+println("=== 커스텀 데코레이터 ===")
+println(sayHello("World"))
+println(sayHello("EzyLang"))

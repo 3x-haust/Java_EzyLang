@@ -20,7 +20,6 @@ public class Lexer {
         keywords.put("is", Token.TokenType.IS);
         keywords.put("as", Token.TokenType.AS);
         keywords.put("func", Token.TokenType.FUNC);
-        keywords.put("memo", Token.TokenType.MEMO);
         keywords.put("in", Token.TokenType.IN);
         keywords.put("print", Token.TokenType.PRINT);
         keywords.put("println", Token.TokenType.PRINTLN);
@@ -37,8 +36,15 @@ public class Lexer {
         keywords.put("switch", Token.TokenType.SWITCH);
         keywords.put("case", Token.TokenType.CASE);
         keywords.put("default", Token.TokenType.DEFAULT);
-        keywords.put("test", Token.TokenType.TEST);
         keywords.put("assert", Token.TokenType.ASSERT);
+        keywords.put("class", Token.TokenType.CLASS);
+        keywords.put("interface", Token.TokenType.INTERFACE);
+        keywords.put("new", Token.TokenType.NEW);
+        keywords.put("self", Token.TokenType.SELF);
+        keywords.put("parent", Token.TokenType.PARENT);
+        keywords.put("extends", Token.TokenType.EXTENDS);
+        keywords.put("decorator", Token.TokenType.DECORATOR);
+        keywords.put("entry", Token.TokenType.ENTRY);
     }
 
     private final String source;
@@ -86,6 +92,7 @@ public class Lexer {
             case ':' -> addToken(Token.TokenType.COLON);
             case ';' -> addToken(Token.TokenType.SEMICOLON);
             case '$' -> addToken(Token.TokenType.DOLLAR);
+            case '@' -> addToken(Token.TokenType.AT);
 
             case '+' -> {
                 if (match('=')) {

@@ -1,0 +1,44 @@
+// 함수 데코레이터 - @log, @deprecated, @guard
+
+// @log: 함수 호출/반환 로그 출력
+@log
+func add(a: number, b: number): number {
+    return a + b
+}
+
+println("=== @log ===")
+add(3, 4)
+
+// @deprecated: 사용 시 경고 메시지 출력
+@deprecated("addNumbers를 사용하세요")
+func oldAdd(a: number, b: number): number {
+    return a + b
+}
+
+println("\n=== @deprecated ===")
+oldAdd(1, 2)
+
+// @guard: 매개변수 유효성 검증
+@guard("n", "n >= 0")
+func factorial(n: number): number {
+    if (n <= 1) {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+println("\n=== @guard ===")
+println("5! = ${factorial(5)}")
+
+// @memo: 메모이제이션 (이전 결과 캐싱)
+@memo
+func fib(n: number): number {
+    if (n <= 1) {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+println("\n=== @memo ===")
+println("fib(30) = ${fib(30)}")
+println("fib(40) = ${fib(40)}")

@@ -1,0 +1,29 @@
+// os 모듈 - 환경변수, 프로세스 실행, 경로 조작
+
+from os import *
+
+// 환경변수
+println("=== 환경변수 ===")
+home: string = env("HOME")
+println("HOME: ${home}")
+println("없는 변수: ${env("NO_SUCH_VAR", "기본값")}")
+
+// 현재 디렉토리, 홈 디렉토리
+println("\n=== 시스템 정보 ===")
+println("현재 디렉토리: ${cwd()}")
+println("홈 디렉토리: ${homedir()}")
+println("플랫폼: ${platform()}")
+println("경로 구분자: ${SEP}")
+
+// 프로세스 실행
+println("\n=== 프로세스 실행 ===")
+result: string = exec("echo Hello from EzyLang")
+println("결과: ${result}")
+
+// 경로 조작
+println("\n=== 경로 조작 ===")
+fullPath: string = pathJoin("/Users", "test", "file.txt")
+println("pathJoin: ${fullPath}")
+println("pathDir: ${pathDir(fullPath)}")
+println("pathFile: ${pathFile(fullPath)}")
+println("pathExt: ${pathExt(fullPath)}")

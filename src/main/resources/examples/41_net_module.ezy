@@ -1,0 +1,23 @@
+// net 모듈 - HTTP 클라이언트
+// 외부 API 호출 예제 (네트워크 필요)
+
+from net import *
+from json import *
+
+// HTTP GET 요청
+println("=== HTTP GET ===")
+response: string = httpGet("https://httpbin.org/get")
+data: any = parse(response)
+println("URL: ${get(data, "url")}")
+
+// HTTP POST 요청
+println("\n=== HTTP POST ===")
+body: string = stringify(set(set(newObject(), "name", "EzyLang"), "version", "2.0"))
+postResponse: string = httpPost("https://httpbin.org/post", body)
+postData: any = parse(postResponse)
+println("전송 데이터: ${get(postData, "data")}")
+
+// HTTP 상태 코드
+println("\n=== HTTP 상태 코드 ===")
+status: number = httpStatus("https://httpbin.org/status/200")
+println("상태: ${status}")

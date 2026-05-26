@@ -1,0 +1,31 @@
+// 클래스 기본 - 기본 생성자, 필드, 메서드
+// class ClassName(매개변수) { ... }
+
+class Person(name: string, age: number) {
+    func greet(): string {
+        return "안녕하세요, ${self.name}입니다. ${self.age}살이에요."
+    }
+
+    func isAdult(): boolean {
+        return self.age >= 18
+    }
+}
+
+// new 키워드로 인스턴스 생성
+person: Person = new Person("김철수", 25)
+println(person.greet())
+println("성인 여부: ${person.isAdult()}")
+println("이름: ${person.name}")
+
+// 기본값이 있는 매개변수
+class Config(host: string = "localhost", port: number = 8080) {
+    func url(): string {
+        return "http://${self.host}:${self.port}"
+    }
+}
+
+config1: Config = new Config()
+println("\n기본 설정: ${config1.url()}")
+
+config2: Config = new Config("example.com", 443)
+println("커스텀 설정: ${config2.url()}")

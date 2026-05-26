@@ -30,6 +30,21 @@ public class Parser {
     }
 
     private Node parseStatement() throws ParseException {
+        if (check(Token.TokenType.AT)) {
+            return parseDecoratedStatement();
+        }
+        if (match(Token.TokenType.CLASS)) {
+            return parseClassDecl(new ArrayList<>());
+        }
+        if (match(Token.TokenType.INTERFACE)) {
+            return parseInterfaceDecl();
+        }
+        if (match(Token.TokenType.DECORATOR)) {
+            return parseDecoratorDecl();
+        }
+        if (match(Token.TokenType.ENTRY)) {
+            return parseEntryBlock();
+        }
         if (match(Token.TokenType.FROM)) {
             return parseFromImportStatement();
         }
@@ -39,12 +54,8 @@ public class Parser {
         if (match(Token.TokenType.IMPORT)) {
             return parseImportStatement();
         }
-        if (match(Token.TokenType.MEMO)) {
-            consume(Token.TokenType.FUNC, "Expected 'func' after 'memo'");
-            return parseFunctionDecl(true);
-        }
         if (match(Token.TokenType.FUNC)) {
-            return parseFunctionDecl(false);
+            return parseFunctionDecl(false, false, new ArrayList<>());
         }
         if (match(Token.TokenType.IDENTIFIER)) {
             Token identifierToken = previous();
@@ -65,17 +76,32 @@ public class Parser {
             } else if (check(Token.TokenType.LEFT_PAREN)) {
                 return parseFunctionCall();
             } else if (match(Token.TokenType.DOT)) {
-                Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
-                consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
-                List<Node> arguments = new ArrayList<>();
-                if (!check(Token.TokenType.RIGHT_PAREN)) {
-                    do {
-                        arguments.add(parseExpression());
-                    } while (match(Token.TokenType.COMMA));
+                Token memberToken = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
+
+                if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL, Token.TokenType.MINUS_EQUAL,
+                        Token.TokenType.ASTERISK_EQUAL, Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
+                    Token operator = previous();
+                    Node value = parseExpression();
+                    Node obj = new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn());
+                    return new PropertyAssign(obj, memberToken.getValue(), operator, value, identifierToken.getLine(), identifierToken.getColumn());
                 }
-                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
-                Node methodCall = new MethodCall(identifierToken.getValue(), methodToken.getValue(), arguments, null, identifierToken.getLine(), identifierToken.getColumn());
-                return new ExpressionStatement(methodCall, methodCall.getLine(), methodCall.getColumn());
+
+                if (match(Token.TokenType.LEFT_PAREN)) {
+                    List<Node> arguments = new ArrayList<>();
+                    if (!check(Token.TokenType.RIGHT_PAREN)) {
+                        do {
+                            arguments.add(parseExpression());
+                        } while (match(Token.TokenType.COMMA));
+                    }
+                    consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                    Node methodCall = new MethodCall(identifierToken.getValue(), memberToken.getValue(), arguments, null, identifierToken.getLine(), identifierToken.getColumn());
+                    return new ExpressionStatement(methodCall, methodCall.getLine(), methodCall.getColumn());
+                }
+
+                Node propAccess = new PropertyAccess(
+                        new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn()),
+                        memberToken.getValue(), memberToken.getLine(), memberToken.getColumn());
+                return new ExpressionStatement(propAccess, identifierToken.getLine(), identifierToken.getColumn());
             } else if (check(Token.TokenType.COLON)) {
                 return parseVariableDecl(false);
             } else if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL,
@@ -110,11 +136,11 @@ public class Parser {
             Token continueToken = previous();
             return new ContinueStatement(continueToken.getLine(), continueToken.getColumn());
         }
-        if (match(Token.TokenType.TEST)) {
-            return parseTestBlock();
-        }
         if (match(Token.TokenType.ASSERT)) {
             return parseAssertStatement();
+        }
+        if (match(Token.TokenType.SELF)) {
+            return parseSelfStatement();
         }
         if (match(Token.TokenType.IF)) {
             return parseIfStatement();
@@ -173,7 +199,7 @@ public class Parser {
         return new ReturnStatement(value, returnToken.getLine(), returnToken.getColumn());
     }
 
-    private Node parseFunctionDecl(boolean isMemo) throws ParseException {
+    private Node parseFunctionDecl(boolean isMemo, boolean isOverride, List<Decorator> decorators) throws ParseException {
         String name = consume(Token.TokenType.IDENTIFIER, "Expected function name").getValue();
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after function name");
 
@@ -203,7 +229,7 @@ public class Parser {
         }
 
         Node body = parseStatement();
-        return new FunctionDecl(name, paramNames, paramTypes, isArrayTypes, returnType, isReturnArray, isMemo, body, previous().getLine(), previous().getColumn());
+        return new FunctionDecl(name, paramNames, paramTypes, isArrayTypes, returnType, isReturnArray, isMemo, isOverride, decorators, body, previous().getLine(), previous().getColumn());
     }
 
     private Node parseFunctionCall() throws ParseException {
@@ -559,6 +585,15 @@ public class Parser {
     }
 
     private Node parsePrimary() throws ParseException {
+        if (match(Token.TokenType.NEW)) {
+            return parseNewExpr();
+        }
+        if (match(Token.TokenType.SELF)) {
+            return parseSelfExpr();
+        }
+        if (match(Token.TokenType.PARENT)) {
+            return parseParentExpr();
+        }
         if (match(Token.TokenType.LEFT_BRACKET)) {
             return parseArrayLiteral();
         }
@@ -583,7 +618,7 @@ public class Parser {
             Token token = previous();
             Node literal = token.getValue().length() == 1 ?
                     new Literal(token.getValue().charAt(0), "char", token.getLine(), token.getColumn()) :
-                    new Literal(token.getValue(), "string", token.getLine(), token.getColumn());
+                    parseStringInterpolation(new Literal(token.getValue(), "string", token.getLine(), token.getColumn()));
             if (match(Token.TokenType.DOT)) {
                 Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
                 consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
@@ -632,7 +667,7 @@ public class Parser {
                 consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
                 expr = new ArrayAccess(token.getValue(), index, token.getLine(), token.getColumn());
             } else if (match(Token.TokenType.DOT)) {
-                Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
+                Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
                 if (match(Token.TokenType.LEFT_PAREN)) {
                     List<Node> arguments = new ArrayList<>();
                     if (!check(Token.TokenType.RIGHT_PAREN)) {
@@ -643,8 +678,23 @@ public class Parser {
                     consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
                     expr = new MethodCall(token.getValue(), methodToken.getValue(), arguments, null, token.getLine(), token.getColumn());
                 } else {
-                    expr = new MethodCall(token.getValue(), methodToken.getValue(), new ArrayList<>(), null, token.getLine(), token.getColumn());
-                    ((MethodCall) expr).setPropertyAccess(true);
+                    expr = new PropertyAccess(new Identifier(token.getValue(), token.getLine(), token.getColumn()),
+                            methodToken.getValue(), methodToken.getLine(), methodToken.getColumn());
+                }
+                while (match(Token.TokenType.DOT)) {
+                    Token chainToken = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
+                    if (match(Token.TokenType.LEFT_PAREN)) {
+                        List<Node> args = new ArrayList<>();
+                        if (!check(Token.TokenType.RIGHT_PAREN)) {
+                            do {
+                                args.add(parseExpression());
+                            } while (match(Token.TokenType.COMMA));
+                        }
+                        consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                        expr = new MethodCall(null, chainToken.getValue(), args, expr, chainToken.getLine(), chainToken.getColumn());
+                    } else {
+                        expr = new PropertyAccess(expr, chainToken.getValue(), chainToken.getLine(), chainToken.getColumn());
+                    }
                 }
             } else {
                 expr = new Identifier(token.getValue(), token.getLine(), token.getColumn());
@@ -665,6 +715,308 @@ public class Parser {
 
         throw new ParseException(fileName, "Expected expression", peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));
     }
+
+
+    private List<Decorator> parseDecorators() throws ParseException {
+        List<Decorator> decorators = new ArrayList<>();
+        while (match(Token.TokenType.AT)) {
+            Token nameToken = consume(Token.TokenType.IDENTIFIER, "Expected decorator name after '@'");
+            List<Node> args = new ArrayList<>();
+            if (match(Token.TokenType.LEFT_PAREN)) {
+                if (!check(Token.TokenType.RIGHT_PAREN)) {
+                    do {
+                        args.add(parseExpression());
+                    } while (match(Token.TokenType.COMMA));
+                }
+                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after decorator arguments");
+            }
+            decorators.add(new Decorator(nameToken.getValue(), args, nameToken.getLine(), nameToken.getColumn()));
+        }
+        return decorators;
+    }
+
+    private Node parseDecoratedStatement() throws ParseException {
+        List<Decorator> decorators = parseDecorators();
+
+        if (match(Token.TokenType.CLASS)) {
+            return parseClassDecl(decorators);
+        }
+        if (match(Token.TokenType.FUNC)) {
+            boolean isOverride = decorators.stream().anyMatch(d -> d.getName().equals("override"));
+            return parseFunctionDecl(false, isOverride, decorators);
+        }
+
+        throw new ParseException(fileName, "Expected 'class' or 'func' after decorator",
+                peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));
+    }
+
+    private Node parseClassDecl(List<Decorator> decorators) throws ParseException {
+        Token classToken = previous();
+        String name = consume(Token.TokenType.IDENTIFIER, "Expected class name").getValue();
+
+        List<ClassField> constructorParams = new ArrayList<>();
+        if (match(Token.TokenType.LEFT_PAREN)) {
+            if (!check(Token.TokenType.RIGHT_PAREN)) {
+                do {
+                    List<Decorator> fieldDecorators = parseDecorators();
+                    String paramName = consume(Token.TokenType.IDENTIFIER, "Expected parameter name").getValue();
+                    consume(Token.TokenType.COLON, "Expected ':' after parameter name");
+                    Token paramType = peek();
+                    advance();
+                    boolean isArray = isArrayType();
+                    Node defaultValue = null;
+                    if (match(Token.TokenType.EQUAL)) {
+                        defaultValue = parseExpression();
+                    }
+                    constructorParams.add(new ClassField(paramName, paramType, isArray, defaultValue, fieldDecorators));
+                } while (match(Token.TokenType.COMMA));
+            }
+            consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after constructor parameters");
+        }
+
+        String parentClass = null;
+        List<Node> parentArgs = new ArrayList<>();
+        List<String> interfaces = new ArrayList<>();
+
+        if (match(Token.TokenType.COLON)) {
+            String firstName = consume(Token.TokenType.IDENTIFIER, "Expected class or interface name after ':'").getValue();
+            if (match(Token.TokenType.LEFT_PAREN)) {
+                parentClass = firstName;
+                if (!check(Token.TokenType.RIGHT_PAREN)) {
+                    do {
+                        parentArgs.add(parseExpression());
+                    } while (match(Token.TokenType.COMMA));
+                }
+                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after parent constructor arguments");
+            } else {
+                interfaces.add(firstName);
+            }
+
+            while (match(Token.TokenType.COMMA)) {
+                String ifaceName = consume(Token.TokenType.IDENTIFIER, "Expected interface name").getValue();
+                interfaces.add(ifaceName);
+            }
+        }
+
+        List<ClassField> fields = new ArrayList<>();
+        List<FunctionDecl> methods = new ArrayList<>();
+
+        if (match(Token.TokenType.LEFT_BRACE)) {
+            while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+                List<Decorator> memberDecorators = parseDecorators();
+
+                if (match(Token.TokenType.OVERRIDE)) {
+                    consume(Token.TokenType.FUNC, "Expected 'func' after 'override'");
+                    methods.add((FunctionDecl) parseFunctionDecl(false, true, memberDecorators));
+                } else if (match(Token.TokenType.MEMO)) {
+                    consume(Token.TokenType.FUNC, "Expected 'func' after 'memo'");
+                    methods.add((FunctionDecl) parseFunctionDecl(true, false, memberDecorators));
+                } else if (match(Token.TokenType.FUNC)) {
+                    methods.add((FunctionDecl) parseFunctionDecl(false, false, memberDecorators));
+                } else if (check(Token.TokenType.IDENTIFIER)) {
+                    Token fieldName = advance();
+                    consume(Token.TokenType.COLON, "Expected ':' after field name");
+                    Token fieldType = peek();
+                    advance();
+                    boolean isArray = isArrayType();
+                    Node defaultValue = null;
+                    if (match(Token.TokenType.EQUAL)) {
+                        defaultValue = parseExpression();
+                    }
+                    fields.add(new ClassField(fieldName.getValue(), fieldType, isArray, defaultValue, memberDecorators));
+                } else {
+                    throw new ParseException(fileName, "Expected field or method declaration in class body",
+                            peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));
+                }
+            }
+            consume(Token.TokenType.RIGHT_BRACE, "Expected '}' after class body");
+        }
+
+        return new ClassDecl(name, constructorParams, parentClass, parentArgs, interfaces,
+                fields, methods, decorators, classToken.getLine(), classToken.getColumn());
+    }
+
+    private Node parseInterfaceDecl() throws ParseException {
+        Token ifaceToken = previous();
+        String name = consume(Token.TokenType.IDENTIFIER, "Expected interface name").getValue();
+        consume(Token.TokenType.LEFT_BRACE, "Expected '{' after interface name");
+
+        List<FunctionDecl> methods = new ArrayList<>();
+        while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            consume(Token.TokenType.FUNC, "Expected 'func' in interface body");
+            String methodName = consume(Token.TokenType.IDENTIFIER, "Expected method name").getValue();
+            consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
+
+            List<String> paramNames = new ArrayList<>();
+            List<Token> paramTypes = new ArrayList<>();
+            List<Boolean> isArrayTypes = new ArrayList<>();
+            if (!check(Token.TokenType.RIGHT_PAREN)) {
+                do {
+                    String paramName = consume(Token.TokenType.IDENTIFIER, "Expected parameter name").getValue();
+                    consume(Token.TokenType.COLON, "Expected ':' after parameter name");
+                    Token paramType = peek();
+                    advance();
+                    boolean isArray = isArrayType();
+                    paramNames.add(paramName);
+                    paramTypes.add(paramType);
+                    isArrayTypes.add(isArray);
+                } while (match(Token.TokenType.COMMA));
+            }
+            consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after parameters");
+
+            Token returnType = null;
+            Boolean isReturnArray = false;
+            if (match(Token.TokenType.COLON)) {
+                returnType = peek();
+                advance();
+                isReturnArray = isArrayType();
+            }
+
+            methods.add(new FunctionDecl(methodName, paramNames, paramTypes, isArrayTypes,
+                    returnType, isReturnArray, false, false, new ArrayList<>(), null,
+                    ifaceToken.getLine(), ifaceToken.getColumn()));
+        }
+        consume(Token.TokenType.RIGHT_BRACE, "Expected '}' after interface body");
+
+        return new InterfaceDecl(name, methods, ifaceToken.getLine(), ifaceToken.getColumn());
+    }
+
+    private Node parseDecoratorDecl() throws ParseException {
+        Token decToken = previous();
+        String name = consume(Token.TokenType.IDENTIFIER, "Expected decorator name").getValue();
+        consume(Token.TokenType.LEFT_PAREN, "Expected '(' after decorator name");
+
+        List<String> paramNames = new ArrayList<>();
+        List<Token> paramTypes = new ArrayList<>();
+        if (!check(Token.TokenType.RIGHT_PAREN)) {
+            do {
+                String paramName = consume(Token.TokenType.IDENTIFIER, "Expected parameter name").getValue();
+                consume(Token.TokenType.COLON, "Expected ':' after parameter name");
+                Token paramType = peek();
+                advance();
+                paramNames.add(paramName);
+                paramTypes.add(paramType);
+            } while (match(Token.TokenType.COMMA));
+        }
+        consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after decorator parameters");
+
+        consume(Token.TokenType.LEFT_BRACE, "Expected '{' after decorator declaration");
+        Node body = parseBlock();
+
+        return new DecoratorDecl(name, paramNames, paramTypes, body, decToken.getLine(), decToken.getColumn());
+    }
+
+    private Node parseEntryBlock() throws ParseException {
+        Token entryToken = previous();
+        consume(Token.TokenType.LEFT_BRACE, "Expected '{' after 'entry'");
+        Node body = parseBlock();
+        return new EntryBlock(body, entryToken.getLine(), entryToken.getColumn());
+    }
+
+    private Node parseSelfStatement() throws ParseException {
+        Token selfToken = previous();
+        consume(Token.TokenType.DOT, "Expected '.' after 'self'");
+        Token fieldToken = consume(Token.TokenType.IDENTIFIER, "Expected field name after 'self.'");
+
+        if (match(Token.TokenType.LEFT_PAREN)) {
+            List<Node> arguments = new ArrayList<>();
+            if (!check(Token.TokenType.RIGHT_PAREN)) {
+                do {
+                    arguments.add(parseExpression());
+                } while (match(Token.TokenType.COMMA));
+            }
+            consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+            Node selfExpr = new SelfExpr(null, selfToken.getLine(), selfToken.getColumn());
+            Node methodCall = new MethodCall(null, fieldToken.getValue(), arguments, selfExpr, selfToken.getLine(), selfToken.getColumn());
+            return new ExpressionStatement(methodCall, selfToken.getLine(), selfToken.getColumn());
+        }
+
+        if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL, Token.TokenType.MINUS_EQUAL,
+                Token.TokenType.ASTERISK_EQUAL, Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
+            Token operator = previous();
+            Node value = parseExpression();
+            Node selfExpr = new SelfExpr(null, selfToken.getLine(), selfToken.getColumn());
+            return new PropertyAssign(selfExpr, fieldToken.getValue(), operator, value, selfToken.getLine(), selfToken.getColumn());
+        }
+
+        if (match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
+            Token operator = previous();
+            Node selfExpr = new SelfExpr(fieldToken.getValue(), selfToken.getLine(), selfToken.getColumn());
+            return new IncrementDecrementExpr(selfExpr, operator, false, selfToken.getLine(), selfToken.getColumn());
+        }
+
+        Node expr = new SelfExpr(fieldToken.getValue(), selfToken.getLine(), selfToken.getColumn());
+        return new ExpressionStatement(expr, selfToken.getLine(), selfToken.getColumn());
+    }
+
+    private Node parseNewExpr() throws ParseException {
+        Token newToken = previous();
+        String className = consume(Token.TokenType.IDENTIFIER, "Expected class name after 'new'").getValue();
+        consume(Token.TokenType.LEFT_PAREN, "Expected '(' after class name");
+        List<Node> arguments = new ArrayList<>();
+        if (!check(Token.TokenType.RIGHT_PAREN)) {
+            do {
+                arguments.add(parseExpression());
+            } while (match(Token.TokenType.COMMA));
+        }
+        consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after constructor arguments");
+
+        Node expr = new NewExpr(className, arguments, newToken.getLine(), newToken.getColumn());
+
+        while (match(Token.TokenType.DOT)) {
+            Token memberToken = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
+            if (match(Token.TokenType.LEFT_PAREN)) {
+                List<Node> args = new ArrayList<>();
+                if (!check(Token.TokenType.RIGHT_PAREN)) {
+                    do {
+                        args.add(parseExpression());
+                    } while (match(Token.TokenType.COMMA));
+                }
+                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                expr = new MethodCall(null, memberToken.getValue(), args, expr, memberToken.getLine(), memberToken.getColumn());
+            } else {
+                expr = new PropertyAccess(expr, memberToken.getValue(), memberToken.getLine(), memberToken.getColumn());
+            }
+        }
+
+        return expr;
+    }
+
+    private Node parseSelfExpr() throws ParseException {
+        Token selfToken = previous();
+        if (match(Token.TokenType.DOT)) {
+            Token fieldToken = consume(Token.TokenType.IDENTIFIER, "Expected field name after 'self.'");
+            if (match(Token.TokenType.LEFT_PAREN)) {
+                List<Node> arguments = new ArrayList<>();
+                if (!check(Token.TokenType.RIGHT_PAREN)) {
+                    do {
+                        arguments.add(parseExpression());
+                    } while (match(Token.TokenType.COMMA));
+                }
+                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                Node selfNode = new SelfExpr(null, selfToken.getLine(), selfToken.getColumn());
+                return new MethodCall(null, fieldToken.getValue(), arguments, selfNode, selfToken.getLine(), selfToken.getColumn());
+            }
+            return new SelfExpr(fieldToken.getValue(), selfToken.getLine(), selfToken.getColumn());
+        }
+        return new SelfExpr(null, selfToken.getLine(), selfToken.getColumn());
+    }
+
+    private Node parseParentExpr() throws ParseException {
+        Token parentToken = previous();
+        consume(Token.TokenType.DOT, "Expected '.' after 'parent'");
+        Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after 'parent.'");
+        consume(Token.TokenType.LEFT_PAREN, "Expected '(' after parent method name");
+        List<Node> arguments = new ArrayList<>();
+        if (!check(Token.TokenType.RIGHT_PAREN)) {
+            do {
+                arguments.add(parseExpression());
+            } while (match(Token.TokenType.COMMA));
+        }
+        consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+        return new ParentExpr(methodToken.getValue(), arguments, parentToken.getLine(), parentToken.getColumn());
+    }
+
 
     private Node parseArrayLiteral() throws ParseException {
         List<Node> elements = new ArrayList<>();

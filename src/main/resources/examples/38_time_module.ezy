@@ -1,0 +1,33 @@
+// time 모듈 - 시간, 날짜, 포맷팅
+
+from time import *
+
+// 현재 시간
+timestamp: number = now()
+println("=== 현재 시간 ===")
+println("타임스탬프: ${timestamp}")
+println("포맷: ${format(timestamp)}")
+println("커스텀 포맷: ${format(timestamp, "yyyy/MM/dd")}")
+
+// 날짜 구성 요소
+println("\n=== 날짜 구성 ===")
+println("년: ${year()}")
+println("월: ${month()}")
+println("일: ${day()}")
+println("시: ${hour()}")
+println("분: ${minute()}")
+println("초: ${second()}")
+
+// 시간 변환
+println("\n=== 시간 변환 ===")
+println("5000ms -> 초: ${toSeconds(5000)}")
+println("3초 -> ms: ${toMillis(3)}")
+
+// 타이머
+start: number = now()
+x: number = 0
+for (i: number in 1 .. 10000) {
+    x = x + i
+}
+elapsed: number = now() - start
+println("\n1~10000 합산 (${x}): ${elapsed}ms")

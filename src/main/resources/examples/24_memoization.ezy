@@ -1,9 +1,10 @@
 // 메모이제이션
-// memo 키워드를 함수 앞에 붙이면 계산 결과를 캐시하여 중복 연산을 방지한다
+// @memo 데코레이터를 함수에 붙이면 계산 결과를 캐시하여 중복 연산을 방지한다
 
-// memo 없이 fib(50)을 호출하면 지수 시간이 걸리지만,
-// memo 함수는 이미 계산한 값을 재사용하므로 빠르게 동작한다
-memo func fib(n: number): number {
+// @memo 없이 fib(50)을 호출하면 지수 시간이 걸리지만,
+// @memo 함수는 이미 계산한 값을 재사용하므로 빠르게 동작한다
+@memo
+func fib(n: number): number {
     if (n <= 1) return n
     return fib(n - 1) + fib(n - 2)
 }
@@ -12,8 +13,9 @@ println("fib(10) = ${fib(10)}")
 println("fib(30) = ${fib(30)}")
 println("fib(50) = ${fib(50)}")
 
-// 팩토리얼에도 memo 적용 가능
-memo func factorial(n: number): number {
+// 팩토리얼에도 @memo 적용 가능
+@memo
+func factorial(n: number): number {
     if (n <= 1) return 1
     return n * factorial(n - 1)
 }

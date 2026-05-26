@@ -1,0 +1,33 @@
+// http 모듈 - HTTP 서버 생성
+// 실행 후 http://localhost:8080 에서 확인 가능
+
+from http import *
+from json import *
+
+// 핸들러 함수 정의
+func handleHello(body: string, query: string): string {
+    obj: any = newObject()
+    set(obj, "message", "Hello, EzyLang!")
+    set(obj, "status", "ok")
+    return stringify(obj)
+}
+
+func handleUsers(body: string, query: string): string {
+    return "[{\"id\": 1, \"name\": \"김철수\"}, {\"id\": 2, \"name\": \"이영희\"}]"
+}
+
+func handleEcho(body: string, query: string): string {
+    return body
+}
+
+// 라우트 등록 (핸들러 함수 이름을 문자열로 전달)
+routeGet("/api/hello", "handleHello")
+routeGet("/api/users", "handleUsers")
+routePost("/api/echo", "handleEcho")
+
+// 서버 시작 (주의: 이 줄은 블로킹됨)
+// serve(8080)
+println("HTTP 서버 예제 (serve(8080) 주석 해제 시 실행)")
+println("GET  /api/hello  -> {\"message\": \"Hello, EzyLang!\"}")
+println("GET  /api/users  -> 사용자 목록")
+println("POST /api/echo   -> 요청 본문 그대로 반환")

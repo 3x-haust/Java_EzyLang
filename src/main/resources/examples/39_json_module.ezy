@@ -1,0 +1,38 @@
+// json 모듈 - JSON 파싱/직렬화
+
+from json import *
+
+// JSON 파싱
+data: any = parse("{\"name\": \"김철수\", \"age\": 25, \"active\": true}")
+println("=== JSON 파싱 ===")
+println("이름: ${get(data, "name")}")
+println("나이: ${get(data, "age")}")
+println("활성: ${get(data, "active")}")
+
+// JSON 객체 수정
+set(data, "email", "kim@example.com")
+println("이메일 추가 후: ${stringify(data)}")
+
+// 키 확인
+println("\nhasKey name: ${hasKey(data, "name")}")
+println("hasKey phone: ${hasKey(data, "phone")}")
+
+// 키/값 목록
+println("\n키 목록: ${keys(data)}")
+
+// 배열 JSON
+arr: any = parse("[1, 2, 3, \"hello\", true]")
+println("\n=== 배열 JSON ===")
+println("배열: ${stringify(arr)}")
+
+// 새 객체 생성 및 직렬화
+obj: any = newObject()
+set(obj, "title", "EzyLang")
+set(obj, "version", 2.0)
+set(obj, "features", parse("[\"classes\", \"decorators\", \"modules\"]"))
+println("\n=== 새 객체 ===")
+println(stringify(obj))
+
+// 키 삭제
+remove(obj, "version")
+println("version 삭제 후: ${stringify(obj)}")
