@@ -16,6 +16,10 @@ public class ParseException extends Exception {
         this.errorLine = errorLine;
     }
 
+    public ParseException detach() {
+        return new ParseException(fileName, errorMessage, line, column, errorLine);
+    }
+
     public int getLine() {
         return line;
     }

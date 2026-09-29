@@ -23,7 +23,27 @@ public final class Num {
     public static Object parse(String text) {
         String s = text.trim();
         if (s.matches("[+-]?\\d+")) return norm(new BigInteger(s));
-        return norm(Double.parseDouble(s));
+        double value = Double.parseDouble(s);
+        if (Double.isInfinite(value) || Double.isNaN(value)) {
+            throw new NumberFormatException("number out of range: " + s);
+        }
+        return norm(value);
+    }
+
+    public static Object canonical(Object o) {
+        if (o instanceof Double d && !Double.isInfinite(d) && !Double.isNaN(d) && d == Math.rint(d)) {
+            return norm(new BigDecimal(d).toBigInteger());
+        }
+        if (o instanceof List<?> list) {
+            List<Object> result = new java.util.ArrayList<>();
+            for (Object item : list) result.add(canonical(item));
+            return result;
+        }
+        return norm(o);
+    }
+
+    public static boolean isNaN(Object o) {
+        return o instanceof Double d && Double.isNaN(d);
     }
 
     public static Object norm(Object o) {
@@ -41,6 +61,7 @@ public final class Num {
 
     @SuppressWarnings("unchecked")
     public static Object deepNorm(Object o) {
+        if (o instanceof ReadOnlyList) return o;
         if (o instanceof List<?> list) {
             List<Object> l = (List<Object>) list;
             for (int i = 0; i < l.size(); i++) l.set(i, deepNorm(l.get(i)));

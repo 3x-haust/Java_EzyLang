@@ -287,8 +287,9 @@ public class Ast {
         private final String rawString;
         private final String baseString;
         private final List<Node> expressions;
-        public InterpolatedString(String rawString, String baseString, List<Node> expressions, int line, int column) {
-            this.rawString = rawString; this.baseString = baseString; this.expressions = expressions;
+        private final List<String> segments;
+        public InterpolatedString(String rawString, String baseString, List<Node> expressions, List<String> segments, int line, int column) {
+            this.rawString = rawString; this.baseString = baseString; this.expressions = expressions; this.segments = segments;
             this.line = line; this.column = column;
         }
         @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitInterpolatedString(this); }
@@ -356,8 +357,9 @@ public class Ast {
         private final Node expression;
         private final List<SwitchCase> cases;
         private final Node defaultCase;
-        public SwitchStatement(Node expression, List<SwitchCase> cases, Node defaultCase, int line, int column) {
-            this.expression = expression; this.cases = cases; this.defaultCase = defaultCase;
+        private final int defaultIndex;
+        public SwitchStatement(Node expression, List<SwitchCase> cases, Node defaultCase, int defaultIndex, int line, int column) {
+            this.expression = expression; this.cases = cases; this.defaultCase = defaultCase; this.defaultIndex = defaultIndex;
             this.line = line; this.column = column;
         }
         @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitSwitchStatement(this); }

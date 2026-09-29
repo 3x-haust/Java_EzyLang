@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class Main {
-    private static final long INTERPRETER_STACK_SIZE = 1L << 30;
+    private static final long INTERPRETER_STACK_SIZE = 1L << 28;
 
     public static void main(String[] args) throws InterruptedException {
         Thread worker = new Thread(null, () -> run(args), "ezylang-main", INTERPRETER_STACK_SIZE);
@@ -48,7 +48,8 @@ public class Main {
         }
 
         try {
-            if (!fileName.endsWith(".ezy")) throw new IOException("Invalid file extension: Must be '.ezy'");
+            if (!fileName.endsWith(".ezy")) throw new IOException("invalid file extension: must be '.ezy'");
+            if (!java.nio.file.Files.isRegularFile(java.nio.file.Path.of(fileName))) throw new IOException("file not found");
 
             String input = readFile(fileName);
             Lexer lexer = new Lexer(input);
@@ -66,7 +67,7 @@ public class Main {
                 if (interpreter.getTestsFailed() > 0) System.exit(1);
             }
         } catch (IOException e) {
-            System.err.println(e.getMessage());
+            System.err.println(fileName + ": error: " + e.getMessage());
             System.exit(1);
         } catch (ParseException e) {
             System.err.println(e.getFormattedMessage());

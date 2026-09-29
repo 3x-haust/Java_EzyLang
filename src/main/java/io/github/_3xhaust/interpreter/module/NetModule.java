@@ -1,5 +1,7 @@
 package io.github._3xhaust.interpreter.module;
 
+import io.github._3xhaust.ezylang.exception.ParseException;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -14,8 +16,9 @@ public class NetModule {
 
     public static void register(Map<String, NativeFunction> nativeFunctions) {
         nativeFunctions.put("httpGet", args -> {
+            Args.count(args, 1, 1);
+            String url = Args.string(args, 0);
             try {
-                String url = String.valueOf(args.get(0));
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .GET()
@@ -23,15 +26,16 @@ public class NetModule {
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 return response.body();
             } catch (Exception e) {
-                throw new io.github._3xhaust.ezylang.exception.ParseException("net", "HTTP GET failed: " + e.getMessage(), 0, 0, "");
+                throw new ParseException("net", "HTTP GET failed: " + e.getMessage(), 0, 0, "");
             }
         });
 
         nativeFunctions.put("httpPost", args -> {
+            Args.count(args, 1, 3);
+            String url = Args.string(args, 0);
+            String body = args.size() > 1 ? Args.string(args, 1) : "";
+            String contentType = args.size() > 2 ? Args.string(args, 2) : "application/json";
             try {
-                String url = String.valueOf(args.get(0));
-                String body = args.size() > 1 ? String.valueOf(args.get(1)) : "";
-                String contentType = args.size() > 2 ? String.valueOf(args.get(2)) : "application/json";
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", contentType)
@@ -40,14 +44,15 @@ public class NetModule {
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 return response.body();
             } catch (Exception e) {
-                throw new io.github._3xhaust.ezylang.exception.ParseException("net", "HTTP POST failed: " + e.getMessage(), 0, 0, "");
+                throw new ParseException("net", "HTTP POST failed: " + e.getMessage(), 0, 0, "");
             }
         });
 
         nativeFunctions.put("httpPut", args -> {
+            Args.count(args, 1, 2);
+            String url = Args.string(args, 0);
+            String body = args.size() > 1 ? Args.string(args, 1) : "";
             try {
-                String url = String.valueOf(args.get(0));
-                String body = args.size() > 1 ? String.valueOf(args.get(1)) : "";
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .header("Content-Type", "application/json")
@@ -56,13 +61,14 @@ public class NetModule {
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 return response.body();
             } catch (Exception e) {
-                throw new io.github._3xhaust.ezylang.exception.ParseException("net", "HTTP PUT failed: " + e.getMessage(), 0, 0, "");
+                throw new ParseException("net", "HTTP PUT failed: " + e.getMessage(), 0, 0, "");
             }
         });
 
         nativeFunctions.put("httpDelete", args -> {
+            Args.count(args, 1, 1);
+            String url = Args.string(args, 0);
             try {
-                String url = String.valueOf(args.get(0));
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .DELETE()
@@ -70,21 +76,22 @@ public class NetModule {
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 return response.body();
             } catch (Exception e) {
-                throw new io.github._3xhaust.ezylang.exception.ParseException("net", "HTTP DELETE failed: " + e.getMessage(), 0, 0, "");
+                throw new ParseException("net", "HTTP DELETE failed: " + e.getMessage(), 0, 0, "");
             }
         });
 
         nativeFunctions.put("httpStatus", args -> {
+            Args.count(args, 1, 1);
+            String url = Args.string(args, 0);
             try {
-                String url = String.valueOf(args.get(0));
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
                         .GET()
                         .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                return (double) response.statusCode();
+                return (long) response.statusCode();
             } catch (Exception e) {
-                throw new io.github._3xhaust.ezylang.exception.ParseException("net", "HTTP request failed: " + e.getMessage(), 0, 0, "");
+                throw new ParseException("net", "HTTP request failed: " + e.getMessage(), 0, 0, "");
             }
         });
     }

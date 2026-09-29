@@ -1,5 +1,7 @@
 package io.github._3xhaust.interpreter.module;
 
+import io.github._3xhaust.interpreter.runtime.Num;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -8,58 +10,74 @@ import java.util.Map;
 
 public class TimeModule {
     public static void register(Map<String, NativeFunction> nativeFunctions) {
-        nativeFunctions.put("now", args -> (double) System.currentTimeMillis());
+        nativeFunctions.put("now", args -> {
+            Args.count(args, 0, 0);
+            return System.currentTimeMillis();
+        });
 
-        nativeFunctions.put("nanoTime", args -> (double) System.nanoTime());
+        nativeFunctions.put("nanoTime", args -> {
+            Args.count(args, 0, 0);
+            return System.nanoTime();
+        });
 
         nativeFunctions.put("sleep", args -> {
+            Args.count(args, 1, 1);
+            long millis = Args.integer(args, 0);
             try {
-                Thread.sleep(((Number) args.get(0)).longValue());
+                Thread.sleep(millis);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                throw new IllegalArgumentException("sleep interrupted");
             }
             return null;
         });
 
         nativeFunctions.put("format", args -> {
-            long millis = ((Number) args.get(0)).longValue();
-            String pattern = args.size() > 1 ? String.valueOf(args.get(1)) : "yyyy-MM-dd HH:mm:ss";
-            LocalDateTime dt = LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault());
-            return dt.format(DateTimeFormatter.ofPattern(pattern));
+            Args.count(args, 1, 2);
+            long millis = ((Number) Args.number(args, 0)).longValue();
+            String pattern = args.size() == 2 ? Args.string(args, 1) : "yyyy-MM-dd HH:mm:ss";
+            LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault());
+            return dateTime.format(DateTimeFormatter.ofPattern(pattern));
         });
 
-        nativeFunctions.put("year", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getYear();
+        nativeFunctions.put("year", args -> datePart(args, DatePart.YEAR));
+        nativeFunctions.put("month", args -> datePart(args, DatePart.MONTH));
+        nativeFunctions.put("day", args -> datePart(args, DatePart.DAY));
+        nativeFunctions.put("hour", args -> datePart(args, DatePart.HOUR));
+        nativeFunctions.put("minute", args -> datePart(args, DatePart.MINUTE));
+        nativeFunctions.put("second", args -> datePart(args, DatePart.SECOND));
+
+        nativeFunctions.put("toSeconds", args -> {
+            Args.count(args, 1, 1);
+            return Num.div(Args.number(args, 0), 1000L);
         });
 
-        nativeFunctions.put("month", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getMonthValue();
+        nativeFunctions.put("toMillis", args -> {
+            Args.count(args, 1, 1);
+            return Num.mul(Args.number(args, 0), 1000L);
         });
+    }
 
-        nativeFunctions.put("day", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getDayOfMonth();
-        });
+    private static long datePart(java.util.List<Object> args, DatePart part) {
+        Args.count(args, 0, 1);
+        long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) Args.number(args, 0)).longValue();
+        LocalDateTime dateTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault());
+        return switch (part) {
+            case YEAR -> dateTime.getYear();
+            case MONTH -> dateTime.getMonthValue();
+            case DAY -> dateTime.getDayOfMonth();
+            case HOUR -> dateTime.getHour();
+            case MINUTE -> dateTime.getMinute();
+            case SECOND -> dateTime.getSecond();
+        };
+    }
 
-        nativeFunctions.put("hour", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getHour();
-        });
-
-        nativeFunctions.put("minute", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getMinute();
-        });
-
-        nativeFunctions.put("second", args -> {
-            long millis = args.isEmpty() ? System.currentTimeMillis() : ((Number) args.get(0)).longValue();
-            return (double) LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()).getSecond();
-        });
-
-        nativeFunctions.put("toSeconds", args -> ((Number) args.get(0)).doubleValue() / 1000.0);
-
-        nativeFunctions.put("toMillis", args -> ((Number) args.get(0)).doubleValue() * 1000.0);
+    private enum DatePart {
+        YEAR,
+        MONTH,
+        DAY,
+        HOUR,
+        MINUTE,
+        SECOND
     }
 }

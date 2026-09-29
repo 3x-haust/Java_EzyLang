@@ -5,6 +5,8 @@ import java.util.HashMap;
 public class Environment {
     public record TypeSpec(String name, boolean isArray) {}
 
+    public record ModuleVarRef(Scope scope, String name) {}
+
     public static final class Scope {
         final HashMap<String, Object> variables = new HashMap<>();
         final HashMap<String, Object> constants = new HashMap<>();
@@ -70,7 +72,10 @@ public class Environment {
 
     public Object findVariable(String name) {
         Scope s = resolveVariable(name);
-        return s == null ? null : s.variables.get(name);
+        if (s == null) return null;
+        Object value = s.variables.get(name);
+        if (value instanceof ModuleVarRef ref) return ref.scope().variables.get(ref.name());
+        return value;
     }
 
     public boolean hasConstant(String name) {
@@ -100,7 +105,9 @@ public class Environment {
 
     public Object findConstraint(String name) {
         Scope s = resolveVariable(name);
-        return s == null ? null : s.constraints.get(name);
+        if (s == null) return null;
+        if (s.variables.get(name) instanceof ModuleVarRef ref) return ref.scope().constraints.get(ref.name());
+        return s.constraints.get(name);
     }
 
     public void setConstraint(String name, Object value) {
@@ -109,7 +116,9 @@ public class Environment {
 
     public TypeSpec findType(String name) {
         Scope s = resolveVariable(name);
-        return s == null ? null : s.types.get(name);
+        if (s == null) return null;
+        if (s.variables.get(name) instanceof ModuleVarRef ref) return ref.scope().types.get(ref.name());
+        return s.types.get(name);
     }
 
     public void setType(String name, TypeSpec type) {
@@ -118,7 +127,12 @@ public class Environment {
 
     public void updateVariable(String name, Object value) {
         Scope s = resolveVariable(name);
-        if (s != null) s.variables.put(name, value);
+        if (s == null) return;
+        if (s.variables.get(name) instanceof ModuleVarRef ref) {
+            ref.scope().variables.put(ref.name(), value);
+            return;
+        }
+        s.variables.put(name, value);
     }
 
     public void removeVariable(String name) {

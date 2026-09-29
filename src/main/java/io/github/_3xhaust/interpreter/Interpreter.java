@@ -21,6 +21,7 @@ import io.github._3xhaust.interpreter.runtime.EzyClass;
 import io.github._3xhaust.interpreter.runtime.EzyFunction;
 import io.github._3xhaust.interpreter.runtime.EzyInstance;
 import io.github._3xhaust.interpreter.runtime.Num;
+import io.github._3xhaust.interpreter.runtime.ReadOnlyList;
 import io.github._3xhaust.interpreter.runtime.EzyInterface;
 
 public class Interpreter implements Visitor<Object> {
@@ -45,6 +46,11 @@ public class Interpreter implements Visitor<Object> {
     private int functionDepth = 0;
     private final Map<String, ClassDecl> classDecls = new HashMap<>();
     private static final java.util.Set<String> MUTATING_LIST_METHODS = java.util.Set.of("clear", "addAll", "remove", "removeAt", "reverse", "sort", "shuffle");
+    private static final java.util.Set<String> BUILTIN_TYPES = java.util.Set.of("number", "string", "char", "boolean", "func", "any", "void");
+    private static final java.util.Set<String> BUILTIN_FUNCTION_DECORATORS = java.util.Set.of("memo", "log", "timer", "deprecated", "guard", "test", "override");
+    private static final java.util.Set<String> BUILTIN_CLASS_DECORATORS = java.util.Set.of("data", "getter", "setter", "toString");
+    private Map<String, Interpreter> moduleRegistry = new HashMap<>();
+    private java.util.Set<String> loadingModules = new java.util.HashSet<>();
 
     public Interpreter(String fileName, String sourceCode) {
         this.fileName = fileName;
@@ -61,6 +67,27 @@ public class Interpreter implements Visitor<Object> {
             if (statement instanceof FunctionDecl || statement instanceof ClassDecl
                     || statement instanceof InterfaceDecl || statement instanceof DecoratorDecl) {
                 statement.accept(this);
+            }
+        }
+
+        for (Node statement : program.getStatements()) {
+            if (statement instanceof FunctionDecl function) {
+                validateFunctionDeclaration(function);
+            } else if (statement instanceof ClassDecl classDecl) {
+                for (Decorator decorator : classDecl.getDecorators()) {
+                    if (!BUILTIN_CLASS_DECORATORS.contains(decorator.getName())) {
+                        throw error(classDecl, "Unknown class decorator '@" + decorator.getName() + "'");
+                    }
+                }
+                for (ClassField field : classDecl.getConstructorParams()) {
+                    requireKnownType(field.getType().getValue(), classDecl, this);
+                }
+                for (ClassField field : classDecl.getFields()) {
+                    requireKnownType(field.getType().getValue(), classDecl, this);
+                }
+                for (FunctionDecl method : classDecl.getMethods()) {
+                    validateFunctionDeclaration(method);
+                }
             }
         }
 
@@ -83,12 +110,12 @@ public class Interpreter implements Visitor<Object> {
                         func.getBody().accept(this);
                         testsPassed++;
                         System.out.println("[PASS] " + testName);
-                    } catch (AssertionFailedException e) {
-                        testsFailed++;
-                        System.out.println("[FAIL] " + testName + " - " + e.getMessage());
                     } catch (ReturnException e) {
                         testsPassed++;
                         System.out.println("[PASS] " + testName);
+                    } catch (ParseException e) {
+                        testsFailed++;
+                        System.out.println("[FAIL] " + testName + " - " + e.getMessage());
                     } finally {
                         functionDepth--;
                         env.restore(saved);
@@ -98,50 +125,84 @@ public class Interpreter implements Visitor<Object> {
         }
     }
 
-    private Interpreter loadModule(String moduleName) throws ParseException {
+    private void validateFunctionDeclaration(FunctionDecl function) throws ParseException {
+        if (function.getDecorators() != null) {
+            for (Decorator decorator : function.getDecorators()) {
+                if (!BUILTIN_FUNCTION_DECORATORS.contains(decorator.getName()) && !customDecorators.containsKey(decorator.getName())) {
+                    throw error(function, "Unknown decorator '@" + decorator.getName() + "'");
+                }
+            }
+        }
+        for (Token type : function.getParamTypes()) {
+            requireKnownType(type.getValue(), function, this);
+        }
+        if (function.getReturnType() != null) {
+            requireKnownType(function.getReturnType().getValue(), function, this);
+        }
+    }
+
+    private boolean isKnownType(String type) {
+        return BUILTIN_TYPES.contains(type) || classes.containsKey(type) || interfaces.containsKey(type);
+    }
+
+    private void requireKnownType(String type, Node node, Interpreter site) throws ParseException {
+        if (!isKnownType(type)) {
+            throw site.error(node, "Unknown type '" + type + "'");
+        }
+    }
+
+    private Interpreter loadModule(String moduleName, Node importNode) throws ParseException {
         if (loadedModules.containsKey(moduleName)) {
             return loadedModules.get(moduleName);
         }
 
-        try {
-            if (BUILTIN_MODULES.contains(moduleName)) {
-                Interpreter moduleInterpreter = new Interpreter(moduleName + ".ezy", "");
-                moduleInterpreter.isModule = true;
-                registerModuleNatives(moduleName, moduleInterpreter);
-                loadedModules.put(moduleName, moduleInterpreter);
-                return moduleInterpreter;
-            }
-
-            String moduleFileName = moduleName + ".ezy";
-            String sourceCode;
-            String modulePath;
-
-            Path currentDir = Paths.get(fileName).getParent();
-            Path localPath = currentDir != null ? currentDir.resolve(moduleFileName) : Paths.get(moduleFileName);
-
-            if (Files.exists(localPath)) {
-                sourceCode = new String(Files.readAllBytes(localPath));
-                modulePath = localPath.toString();
-            } else {
-                throw new Exception("Module '" + moduleName + "' not found");
-            }
-
-            Lexer lexer = new Lexer(sourceCode);
-            List<Token> tokens = lexer.scanTokens();
-            Parser parser = new Parser(modulePath, sourceCode, tokens);
-            Program program = parser.parse();
-
-            Interpreter moduleInterpreter = new Interpreter(modulePath, sourceCode);
+        if (BUILTIN_MODULES.contains(moduleName)) {
+            Interpreter moduleInterpreter = new Interpreter(moduleName + ".ezy", "");
             moduleInterpreter.isModule = true;
             registerModuleNatives(moduleName, moduleInterpreter);
-            moduleInterpreter.interpret(program);
             loadedModules.put(moduleName, moduleInterpreter);
             return moduleInterpreter;
-        } catch (ParseException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ParseException(fileName, "Failed to load module '" + moduleName + "': " + e.getMessage(), 1, 1, "");
         }
+
+        Path currentDir = Paths.get(fileName).toAbsolutePath().getParent();
+        Path localPath = (currentDir != null ? currentDir.resolve(moduleName + ".ezy") : Paths.get(moduleName + ".ezy")).toAbsolutePath().normalize();
+        String key = localPath.toString();
+
+        Interpreter cached = moduleRegistry.get(key);
+        if (cached != null) {
+            loadedModules.put(moduleName, cached);
+            return cached;
+        }
+        if (loadingModules.contains(key)) {
+            throw error(importNode, "Circular import of module '" + moduleName + "'");
+        }
+        if (!Files.exists(localPath)) {
+            throw error(importNode, "Module '" + moduleName + "' not found");
+        }
+
+        String sourceCode;
+        try {
+            sourceCode = new String(Files.readAllBytes(localPath), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw error(importNode, "Failed to read module '" + moduleName + "': " + e.getMessage());
+        }
+
+        String modulePath = localPath.toString();
+        Program program = new Parser(modulePath, sourceCode, new Lexer(sourceCode).scanTokens()).parse();
+
+        Interpreter moduleInterpreter = new Interpreter(modulePath, sourceCode);
+        moduleInterpreter.isModule = true;
+        moduleInterpreter.moduleRegistry = moduleRegistry;
+        moduleInterpreter.loadingModules = loadingModules;
+        loadingModules.add(key);
+        try {
+            moduleInterpreter.interpret(program);
+        } finally {
+            loadingModules.remove(key);
+        }
+        moduleRegistry.put(key, moduleInterpreter);
+        loadedModules.put(moduleName, moduleInterpreter);
+        return moduleInterpreter;
     }
 
     private void registerNativeFunctions() {
@@ -204,7 +265,7 @@ public class Interpreter implements Visitor<Object> {
     }
 
     private boolean matchesType(String type, boolean isArray, Object value) {
-        if (value == null || type.equals("any")) return true;
+        if (value == null) return true;
         if (isArray) {
             if (!(value instanceof List<?> list)) return false;
             for (Object element : list) {
@@ -212,6 +273,7 @@ public class Interpreter implements Visitor<Object> {
             }
             return true;
         }
+        if (type.equals("any")) return true;
         return switch (type) {
             case "number" -> Num.isNumber(value);
             case "string" -> value instanceof String;
@@ -222,7 +284,7 @@ public class Interpreter implements Visitor<Object> {
                 EzyClass cls = classes.get(type);
                 if (cls != null) yield value instanceof EzyInstance instance && instance.isInstanceOf(cls);
                 if (interfaces.containsKey(type)) yield value instanceof EzyInstance instance && instance.isInstanceOfInterface(type);
-                yield true;
+                yield false;
             }
         };
     }
@@ -234,7 +296,27 @@ public class Interpreter implements Visitor<Object> {
     private boolean valuesEqual(Object left, Object right) {
         if (left == null || right == null) return left == right;
         if (Num.isNumber(left) && Num.isNumber(right)) return Num.equal(left, right);
+        if (left instanceof List<?> l && right instanceof List<?> r) {
+            if (l.size() != r.size()) return false;
+            for (int i = 0; i < l.size(); i++) {
+                if (!valuesEqual(l.get(i), r.get(i))) return false;
+            }
+            return true;
+        }
         return left.equals(right);
+    }
+
+    private int indexOfValue(List<?> list, Object target, boolean last) {
+        if (last) {
+            for (int i = list.size() - 1; i >= 0; i--) {
+                if (valuesEqual(list.get(i), target)) return i;
+            }
+            return -1;
+        }
+        for (int i = 0; i < list.size(); i++) {
+            if (valuesEqual(list.get(i), target)) return i;
+        }
+        return -1;
     }
 
     private int compareValues(Object left, Object right, Token operator, Node node) throws ParseException {
@@ -244,7 +326,12 @@ public class Interpreter implements Visitor<Object> {
     }
 
     private boolean compareOp(Token operator, Object left, Object right, Node node) throws ParseException {
-        return switch (operator.getToken()) {
+        Token.TokenType kind = operator.getToken();
+        if (kind != Token.TokenType.EQUAL_EQUAL && kind != Token.TokenType.NOT_EQUAL && (Num.isNaN(left) || Num.isNaN(right))) {
+            compareValues(left, right, operator, node);
+            return false;
+        }
+        return switch (kind) {
             case EQUAL_EQUAL -> valuesEqual(left, right);
             case NOT_EQUAL -> !valuesEqual(left, right);
             case LESS_THAN -> compareValues(left, right, operator, node) < 0;
@@ -347,6 +434,7 @@ public class Interpreter implements Visitor<Object> {
 
         String typeName = variableDecl.getType().getValue();
         boolean isArray = variableDecl.isArray();
+        requireKnownType(typeName, variableDecl, this);
         if (!matchesType(typeName, isArray, value)) {
             throw error(variableDecl, "Type mismatch: expected " + typeLabel(typeName, isArray) + " but got " + getTypeName(value));
         }
@@ -402,8 +490,12 @@ public class Interpreter implements Visitor<Object> {
         }
         Object value = constantDecl.getValue().accept(this);
         String typeName = constantDecl.getType().getValue();
+        requireKnownType(typeName, constantDecl, this);
         if (!matchesType(typeName, constantDecl.isArray(), value)) {
             throw error(constantDecl, "Type mismatch: expected " + typeLabel(typeName, constantDecl.isArray()) + " but got " + getTypeName(value));
+        }
+        if (value instanceof List<?> list && !(value instanceof ReadOnlyList)) {
+            value = new ReadOnlyList((List<Object>) list);
         }
         setConstant(identifier, value);
         return null;
@@ -488,7 +580,7 @@ public class Interpreter implements Visitor<Object> {
 
     @Override
     public Object visitFunctionExpr(FunctionExpr functionExpr) {
-        return new EzyFunction(functionExpr.getFunction(), env.current(), this);
+        return new EzyFunction(functionExpr.getFunction(), env.current(), this, currentInstance, currentClass);
     }
 
     @Override
@@ -503,7 +595,20 @@ public class Interpreter implements Visitor<Object> {
 
     private Object callValue(Object callee, List<Object> args, Node callNode) throws ParseException {
         if (callee instanceof EzyFunction function) {
-            return function.owner().invokeFunction(function.decl().getName(), function.decl(), function.closure(), args, callNode, this);
+            Interpreter owner = function.owner();
+            if (function.boundInstance() == null) {
+                return owner.invokeFunction(function.decl().getName(), function.decl(), function.closure(), args, callNode, this);
+            }
+            EzyInstance prevInstance = owner.currentInstance;
+            EzyClass prevClass = owner.currentClass;
+            owner.currentInstance = function.boundInstance();
+            owner.currentClass = function.boundClass();
+            try {
+                return owner.invokeFunction(function.decl().getName(), function.decl(), function.closure(), args, callNode, this);
+            } finally {
+                owner.currentInstance = prevInstance;
+                owner.currentClass = prevClass;
+            }
         }
         if (callee instanceof NativeFunction nativeFunction) {
             return callNative(nativeFunction, args, "function", callNode);
@@ -576,38 +681,44 @@ public class Interpreter implements Visitor<Object> {
     @Override
     public Object visitSwitchStatement(SwitchStatement switchStatement) throws ParseException {
         Object switchExpr = switchStatement.getExpression().accept(this);
-        boolean shouldExecute = false;
-        boolean hasMatched = false;
+        List<SwitchCase> cases = switchStatement.getCases();
+        int defaultIndex = switchStatement.getDefaultCase() == null ? -1 : switchStatement.getDefaultIndex();
 
-        try {
-            for (SwitchCase caseStmt : switchStatement.getCases()) {
-                Object caseValue = caseStmt.getValue().accept(this);
-
-                if (shouldExecute || valuesEqual(switchExpr, caseValue)) {
-                    hasMatched = true;
-                    shouldExecute = true;
-
-                    try {
-                        caseStmt.getBody().accept(this);
-                    } catch (BreakException e) {
-                        shouldExecute = false;
-                        break;
-                    }
-
-                    if (caseStmt.isArrowStyle()) {
-                        shouldExecute = false;
-                        break;
-                    }
-                }
+        List<Node> bodies = new ArrayList<>();
+        List<Node> labels = new ArrayList<>();
+        List<Boolean> arrows = new ArrayList<>();
+        for (int i = 0; i <= cases.size(); i++) {
+            if (i == defaultIndex) {
+                bodies.add(switchStatement.getDefaultCase());
+                labels.add(null);
+                arrows.add(false);
             }
-
-            if ((!hasMatched || shouldExecute) && switchStatement.getDefaultCase() != null) {
-                switchStatement.getDefaultCase().accept(this);
+            if (i < cases.size()) {
+                bodies.add(cases.get(i).getBody());
+                labels.add(cases.get(i).getValue());
+                arrows.add(cases.get(i).isArrowStyle());
             }
-
-        } catch (BreakException ignored) {
         }
 
+        int start = -1;
+        for (int i = 0; i < labels.size() && start < 0; i++) {
+            Node label = labels.get(i);
+            if (label != null && valuesEqual(switchExpr, label.accept(this))) start = i;
+        }
+        if (start < 0) {
+            for (int i = 0; i < labels.size(); i++) {
+                if (labels.get(i) == null) start = i;
+            }
+        }
+        if (start < 0) return null;
+
+        try {
+            for (int i = start; i < bodies.size(); i++) {
+                bodies.get(i).accept(this);
+                if (arrows.get(i)) break;
+            }
+        } catch (BreakException ignored) {
+        }
         return null;
     }
 
@@ -618,7 +729,8 @@ public class Interpreter implements Visitor<Object> {
             if (env.hasVariableInCurrentScope(functionName)) {
                 throw error(functionDecl, "Function '" + functionName + "' is already defined in this scope");
             }
-            setVariable(functionName, new EzyFunction(functionDecl, env.current(), this));
+            validateFunctionDeclaration(functionDecl);
+            setVariable(functionName, new EzyFunction(functionDecl, env.current(), this, currentInstance, currentClass));
             env.setType(functionName, new Environment.TypeSpec("func", false));
             return null;
         }
@@ -637,9 +749,15 @@ public class Interpreter implements Visitor<Object> {
             evaluatedArgs.add(arg.accept(this));
         }
 
-        Object bound = env.hasVariable(name) ? findVariable(name) : findConstant(name);
-        if (bound instanceof EzyFunction || bound instanceof NativeFunction) {
-            return callValue(bound, evaluatedArgs, functionCall);
+        if (env.hasVariable(name) || env.hasConstant(name)) {
+            Object bound = env.hasVariable(name) ? findVariable(name) : findConstant(name);
+            if (bound instanceof NativeFunction nativeBound) {
+                return callNative(nativeBound, evaluatedArgs, name, functionCall);
+            }
+            if (bound instanceof EzyFunction) {
+                return callValue(bound, evaluatedArgs, functionCall);
+            }
+            throw error(functionCall, "'" + name + "' is not a function");
         }
 
         FunctionDecl function = functions.get(name);
@@ -649,9 +767,6 @@ public class Interpreter implements Visitor<Object> {
         NativeFunction nativeFunction = nativeFunctions.get(name);
         if (nativeFunction != null) {
             return callNative(nativeFunction, evaluatedArgs, name, functionCall);
-        }
-        if (bound != null) {
-            throw error(functionCall, "'" + name + "' is not a function");
         }
         throw error(functionCall, "Undefined function '" + name + "'");
     }
@@ -663,7 +778,12 @@ public class Interpreter implements Visitor<Object> {
                 if (customDecorators.containsKey(decorator.getName())) custom.add(decorator);
             }
         }
-        return runDecorated(custom, 0, name, function, closure, evaluatedArgs, functionCall, site);
+        if (custom.isEmpty()) {
+            return invokeCore(name, function, closure, evaluatedArgs, functionCall, site);
+        }
+        Object result = runDecorated(custom, 0, name, function, closure, evaluatedArgs, functionCall, site);
+        checkReturn(name, function, result, true, true, functionCall, site);
+        return result;
     }
 
     private Object runDecorated(List<Decorator> custom, int index, String name, FunctionDecl function, Environment.Scope closure, List<Object> evaluatedArgs, Node functionCall, Interpreter site) throws ParseException {
@@ -676,6 +796,17 @@ public class Interpreter implements Visitor<Object> {
         for (Node arg : usage.getArguments()) {
             decoratorArgs.add(arg.accept(this));
         }
+        List<String> decoratorParams = decorator.getParamNames();
+        if (decoratorArgs.size() != decoratorParams.size()) {
+            throw site.error(functionCall, "Decorator '@" + usage.getName() + "' expects " + decoratorParams.size() + " arguments but got " + decoratorArgs.size());
+        }
+        for (int i = 0; i < decoratorParams.size(); i++) {
+            String type = decorator.getParamTypes().get(i).getValue();
+            requireKnownType(type, functionCall, site);
+            if (!matchesType(type, false, decoratorArgs.get(i))) {
+                throw site.error(functionCall, "Decorator '@" + usage.getName() + "' expects '" + type + "' for '" + decoratorParams.get(i) + "' but got '" + getTypeName(decoratorArgs.get(i)) + "'");
+            }
+        }
         Environment.Scope saved = env.enterCall(env.global());
         functionDepth++;
         try {
@@ -683,7 +814,7 @@ public class Interpreter implements Visitor<Object> {
             for (int i = 0; i < params.size(); i++) {
                 setVariable(params.get(i), i < decoratorArgs.size() ? decoratorArgs.get(i) : null);
             }
-            NativeFunction next = args -> runDecorated(custom, index + 1, name, function, closure, evaluatedArgs, functionCall, site);
+            NativeFunction next = args -> runDecorated(custom, index + 1, name, function, closure, args.isEmpty() ? evaluatedArgs : args, functionCall, site);
             setVariable("call", next);
             setVariable("args", new ArrayList<>(evaluatedArgs));
             try {
@@ -691,6 +822,8 @@ public class Interpreter implements Visitor<Object> {
                 return null;
             } catch (ReturnException e) {
                 return e.getValue();
+            } catch (BreakException | ContinueException e) {
+                throw e.detach();
             }
         } finally {
             functionDepth--;
@@ -719,10 +852,11 @@ public class Interpreter implements Visitor<Object> {
         handleGuardDecorators(function, evaluatedArgs, functionCall, site);
 
         Object memoKey = currentInstance == null ? function : Arrays.asList(function, currentInstance);
+        List<Object> memoArgs = isMemo ? (List<Object>) Num.canonical(evaluatedArgs) : null;
         if (isMemo) {
             Map<List<Object>, Object> cache = memoCache.computeIfAbsent(memoKey, k -> new HashMap<>());
-            if (cache.containsKey(evaluatedArgs)) {
-                return cache.get(evaluatedArgs);
+            if (cache.containsKey(memoArgs)) {
+                return cache.get(memoArgs);
             }
         }
 
@@ -736,6 +870,7 @@ public class Interpreter implements Visitor<Object> {
                 String expectedType = paramTypes.get(i).getValue();
                 boolean isArray = isArrayTypes.get(i);
 
+                requireKnownType(expectedType, functionCall, site);
                 if (!matchesType(expectedType, isArray, value)) {
                     throw site.error(functionCall, "Expected '" + typeLabel(expectedType, isArray) + "' but got '" + getTypeName(value) + "'");
                 }
@@ -745,14 +880,18 @@ public class Interpreter implements Visitor<Object> {
 
             Object result = null;
             boolean returned = false;
+            boolean hasValue = false;
             try {
                 function.getBody().accept(this);
             } catch (ReturnException returnEx) {
                 result = returnEx.getValue();
                 returned = true;
+                hasValue = returnEx.hasValue();
+            } catch (BreakException | ContinueException e) {
+                throw e.detach();
             }
-            checkReturn(name, function, result, returned, functionCall, site);
-            if (isMemo) memoCache.computeIfAbsent(memoKey, k -> new HashMap<>()).put(evaluatedArgs, result);
+            checkReturn(name, function, result, returned, hasValue, functionCall, site);
+            if (isMemo) memoCache.computeIfAbsent(memoKey, k -> new HashMap<>()).put(memoArgs, result);
             if (isLog) printLog(name, evaluatedArgs, result);
             if (isTimer) printTimer(name, startTime);
             return result;
@@ -764,7 +903,7 @@ public class Interpreter implements Visitor<Object> {
         }
     }
 
-    private void checkReturn(String name, FunctionDecl function, Object result, boolean returned, Node node, Interpreter site) throws ParseException {
+    private void checkReturn(String name, FunctionDecl function, Object result, boolean returned, boolean hasValue, Node node, Interpreter site) throws ParseException {
         Token returnType = function.getReturnType();
         if (returnType == null) return;
         String type = returnType.getValue();
@@ -775,7 +914,7 @@ public class Interpreter implements Visitor<Object> {
             }
             return;
         }
-        if (!returned) {
+        if (!returned || !hasValue) {
             throw site.error(node, "Function '" + name + "' must return a value of type " + typeLabel(type, isArray));
         }
         if (!matchesType(type, isArray, result)) {
@@ -862,13 +1001,20 @@ public class Interpreter implements Visitor<Object> {
 
     private static class ReturnException extends RuntimeException {
         private final Object value;
+        private final boolean hasValue;
 
-        ReturnException(Object value) {
+        ReturnException(Object value, boolean hasValue) {
+            super(null, null, false, false);
             this.value = value;
+            this.hasValue = hasValue;
         }
 
         public Object getValue() {
             return value;
+        }
+
+        public boolean hasValue() {
+            return hasValue;
         }
     }
 
@@ -877,85 +1023,126 @@ public class Interpreter implements Visitor<Object> {
         if (functionDepth == 0) {
             throw error(returnStatement, "'return' outside of function");
         }
-        Object value = returnStatement.getValue() == null ? null : returnStatement.getValue().accept(this);
-        throw new ReturnException(value);
+        boolean hasValue = returnStatement.getValue() != null;
+        Object value = hasValue ? returnStatement.getValue().accept(this) : null;
+        throw new ReturnException(value, hasValue);
     }
 
     @Override
     public Object visitIncrementDecrementExpr(IncrementDecrementExpr expr) throws ParseException {
-        String varName;
-        boolean isArrayAccess = false;
-        int index = -1;
-
-        if (expr.getOperand() instanceof Identifier) {
-            varName = ((Identifier) expr.getOperand()).getName();
-        } else if (expr.getOperand() instanceof ArrayAccess) {
-            ArrayAccess arrayAccess = (ArrayAccess) expr.getOperand();
-            varName = arrayAccess.getIdentifier();
-            isArrayAccess = true;
-
-            Object indexValue = arrayAccess.getIndex().accept(this);
-            if (!Num.isNumber(indexValue)) {
-                throw error(expr, "Array index must be a number");
-            }
-            index = toIndex(indexValue, expr);
-        } else {
-            throw error(expr, "Invalid operand for increment/decrement operator");
-        }
-
-        if (!isArrayAccess && env.hasConstant(varName) && !env.hasVariable(varName)) {
-            throw error(expr, "Cannot increment/decrement constant '" + varName + "'");
-        }
-
+        Node operand = expr.getOperand();
         Object currentValue;
-        if (isArrayAccess) {
-            Object arrayObj = findVariable(varName);
-            if (arrayObj == null) {
-                arrayObj = findConstant(varName);
-                if (arrayObj != null) {
-                    throw error(expr, "Cannot modify constant array '" + varName + "'");
-                } else {
-                    throw error(expr, "Undefined array '" + varName + "'");
-                }
-            }
+        java.util.function.Consumer<Object> store;
+        String label;
 
-            if (!(arrayObj instanceof List)) {
-                throw error(expr, "Variable '" + varName + "' is not an array");
-            }
-
-            List<Object> array = (List<Object>) arrayObj;
-
-            if (index < 0 || index >= array.size()) {
-                throw error(expr, "Array index out of bounds: " + index);
-            }
-
-            currentValue = array.get(index);
-        } else {
+        if (operand instanceof Identifier identifier) {
+            String varName = identifier.getName();
             if (!env.hasVariable(varName)) {
+                if (env.hasConstant(varName)) {
+                    throw error(expr, "Cannot increment/decrement constant '" + varName + "'");
+                }
                 throw error(expr, "Undefined variable '" + varName + "'");
             }
             currentValue = findVariable(varName);
+            label = varName;
+            store = null;
+        } else if (operand instanceof ArrayAccess || operand instanceof IndexExpr) {
+            Object container;
+            Object indexValue;
+            if (operand instanceof ArrayAccess arrayAccess) {
+                String name = arrayAccess.getIdentifier();
+                if (!env.hasVariable(name) && !env.hasConstant(name)) {
+                    throw error(expr, "Undefined array '" + name + "'");
+                }
+                container = env.hasVariable(name) ? findVariable(name) : findConstant(name);
+                indexValue = arrayAccess.getIndex().accept(this);
+            } else {
+                IndexExpr indexExpr = (IndexExpr) operand;
+                container = indexExpr.getTarget().accept(this);
+                indexValue = indexExpr.getIndex().accept(this);
+            }
+            List<Object> list = requireMutableList(container, expr);
+            int index = toIndex(indexValue, expr);
+            if (index < 0 || index >= list.size()) {
+                throw error(expr, "Array index out of bounds");
+            }
+            currentValue = list.get(index);
+            label = null;
+            store = v -> list.set(index, v);
+        } else if (operand instanceof PropertyAccess || operand instanceof SelfExpr) {
+            EzyInstance instance;
+            String property;
+            if (operand instanceof PropertyAccess propertyAccess) {
+                Object object = propertyAccess.getObject().accept(this);
+                if (!(object instanceof EzyInstance inst)) {
+                    throw error(expr, "Cannot increment/decrement property on non-object");
+                }
+                instance = inst;
+                property = propertyAccess.getProperty();
+            } else {
+                if (currentInstance == null) {
+                    throw error(expr, "'self' can only be used inside a class method");
+                }
+                instance = currentInstance;
+                property = ((SelfExpr) operand).getFieldName();
+            }
+            if (!instance.hasField(property)) {
+                throw error(expr, "Property '" + property + "' not found on " + instance.getEzyClass().getName());
+            }
+            currentValue = instance.getField(property);
+            label = null;
+            EzyInstance target = instance;
+            store = v -> target.setField(property, v);
+        } else {
+            throw error(expr, "Invalid operand for increment/decrement operator");
         }
 
         if (!Num.isNumber(currentValue)) {
             throw error(expr, "Cannot increment/decrement non-numeric value");
         }
 
-        Object value = currentValue;
         Object newValue = expr.getOperator().getToken() == Token.TokenType.PLUS_PLUS
-                ? Num.add(value, 1L)
-                : Num.sub(value, 1L);
+                ? Num.add(currentValue, 1L)
+                : Num.sub(currentValue, 1L);
 
-        if (!isArrayAccess) validateConstraint(varName, newValue, expr);
-
-        if (isArrayAccess) {
-            List<Object> array = (List<Object>) findVariable(varName);
-            array.set(index, newValue);
+        if (label != null) {
+            validateConstraint(label, newValue, expr);
+            env.updateVariable(label, newValue);
         } else {
-            env.updateVariable(varName, newValue);
+            store.accept(newValue);
         }
 
-        return expr.isPrefix() ? newValue : value;
+        return expr.isPrefix() ? newValue : currentValue;
+    }
+
+    private List<Object> requireMutableList(Object container, Node node) throws ParseException {
+        if (container instanceof ReadOnlyList) {
+            throw error(node, "Cannot modify constant array");
+        }
+        if (!(container instanceof List<?>)) {
+            throw error(node, "Value of type '" + getTypeName(container) + "' is not an array");
+        }
+        return (List<Object>) container;
+    }
+
+    private Environment.TypeSpec elementTypeOf(Node target) throws ParseException {
+        if (target instanceof Identifier identifier) {
+            Environment.TypeSpec spec = env.findType(identifier.getName());
+            return spec != null && spec.isArray() ? spec : null;
+        }
+        if (target instanceof PropertyAccess propertyAccess) {
+            Object object = propertyAccess.getObject().accept(this);
+            if (object instanceof EzyInstance instance) {
+                ClassField field = findFieldDecl(instance.getEzyClass(), propertyAccess.getProperty());
+                if (field != null && field.isArray()) return new Environment.TypeSpec(field.getType().getValue(), true);
+            }
+            return null;
+        }
+        if (target instanceof SelfExpr self && self.getFieldName() != null && currentInstance != null) {
+            ClassField field = findFieldDecl(currentInstance.getEzyClass(), self.getFieldName());
+            if (field != null && field.isArray()) return new Environment.TypeSpec(field.getType().getValue(), true);
+        }
+        return null;
     }
 
     private String getTypeName(Object value) {
@@ -1022,40 +1209,47 @@ public class Interpreter implements Visitor<Object> {
                 args.add(arg.accept(this));
             }
 
-            if (methodName.equals("copy") && instance.getEzyClass().hasDecorator("data")) {
+            if (methodName.equals("copy") && instance.getEzyClass().hasDecoratorInHierarchy("data")) {
                 return instance.copy();
             }
 
             if (methodName.startsWith("get") && methodName.length() > 3) {
                 String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
                 EzyClass cls = instance.getEzyClass();
-                if ((cls.hasDecorator("getter") || cls.hasDecorator("data")) && instance.hasField(fieldName)) {
+                if ((cls.hasDecoratorInHierarchy("getter") || cls.hasDecoratorInHierarchy("data")) && instance.hasField(fieldName) && args.isEmpty()) {
                     return instance.getField(fieldName);
                 }
             }
             if (methodName.startsWith("set") && methodName.length() > 3 && args.size() == 1) {
                 String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
                 EzyClass cls = instance.getEzyClass();
-                if ((cls.hasDecorator("setter") || cls.hasDecorator("data")) && instance.hasField(fieldName)) {
+                if ((cls.hasDecoratorInHierarchy("setter") || cls.hasDecoratorInHierarchy("data")) && instance.hasField(fieldName)) {
                     setFieldChecked(instance, fieldName, args.get(0), methodCall);
                     return null;
                 }
             }
 
-            if (methodName.equals("toString") && (instance.getEzyClass().hasDecorator("data") || instance.getEzyClass().hasDecorator("toString"))) {
+            if (methodName.equals("toString") && (instance.getEzyClass().hasDecoratorInHierarchy("data") || instance.getEzyClass().hasDecoratorInHierarchy("toString"))) {
                 return instance.toString();
             }
 
             FunctionDecl method = instance.getEzyClass().findMethod(methodName);
             if (method != null) {
-                return callMethod(instance, method, args, instance.getEzyClass(), methodCall);
+                return callMethod(instance, method, args, instance.getEzyClass().findDeclaringClass(methodName), methodCall);
             }
+            if (instance.hasField(methodName)) {
+                Object fieldValue = instance.getField(methodName);
+                if (fieldValue instanceof EzyFunction || fieldValue instanceof NativeFunction) {
+                    return callValue(fieldValue, args, methodCall);
+                }
+                throw error(methodCall, "Field '" + methodName + "' of " + instance.getEzyClass().getName() + " is not a function");
+            }
+            throw error(methodCall, "Undefined method '" + methodName + "' on " + instance.getEzyClass().getName());
 
         }
 
-        if (object instanceof List<?> && objectName != null && !env.hasVariable(objectName) && env.hasConstant(objectName)
-                && MUTATING_LIST_METHODS.contains(methodName)) {
-            throw error(methodCall, "Cannot modify constant array '" + objectName + "'");
+        if (object instanceof ReadOnlyList && MUTATING_LIST_METHODS.contains(methodName)) {
+            throw error(methodCall, "Cannot modify constant array" + (objectName != null ? " '" + objectName + "'" : ""));
         }
         if (methodName.equals("length") && (object instanceof List<?> || object instanceof String)) {
             if (!arguments.isEmpty()) {
@@ -1122,21 +1316,21 @@ public class Interpreter implements Visitor<Object> {
                 throw error(methodCall, "Method 'contains' takes exactly one argument");
             }
             Object arg = arguments.get(0).accept(this);
-            return ((List<?>) object).contains(arg);
+            return indexOfValue((List<?>) object, arg, false) >= 0;
         }
         if (methodName.equals("indexOf") && object instanceof List<?>) {
             if (arguments.size() != 1) {
                 throw error(methodCall, "Method 'indexOf' takes exactly one argument");
             }
             Object arg = arguments.get(0).accept(this);
-            return (long) ((List<?>) object).indexOf(arg);
+            return (long) indexOfValue((List<?>) object, arg, false);
         }
         if (methodName.equals("lastIndexOf") && object instanceof List<?>) {
             if (arguments.size() != 1) {
                 throw error(methodCall, "Method 'lastIndexOf' takes exactly one argument");
             }
             Object arg = arguments.get(0).accept(this);
-            return (long) ((List<?>) object).lastIndexOf(arg);
+            return (long) indexOfValue((List<?>) object, arg, true);
         }
         if (methodName.equals("isEmpty") && object instanceof List<?>) {
             if (!arguments.isEmpty()) {
@@ -1165,9 +1359,11 @@ public class Interpreter implements Visitor<Object> {
             if (!(arg instanceof List<?>)) {
                 throw error(methodCall, "Argument must be an array");
             }
-            Environment.TypeSpec spec = objectName != null ? env.findType(objectName) : null;
-            if (spec != null && spec.isArray() && !matchesType(spec.name(), true, arg)) {
-                throw error(methodCall, "Type mismatch: cannot add those elements to '" + objectName + "' of type " + typeLabel(spec.name(), true));
+            Environment.TypeSpec spec = objectName != null
+                    ? elementTypeOf(new Identifier(objectName, methodCall.getLine(), methodCall.getColumn()))
+                    : elementTypeOf(objectNode);
+            if (spec != null && !matchesType(spec.name(), true, arg)) {
+                throw error(methodCall, "Type mismatch: cannot add those elements to an array of type " + typeLabel(spec.name(), true));
             }
             ((List<Object>) object).addAll((List<?>) arg);
             return null;
@@ -1177,7 +1373,10 @@ public class Interpreter implements Visitor<Object> {
                 throw error(methodCall, "Method 'remove' takes exactly one argument");
             }
             Object arg = arguments.get(0).accept(this);
-            return ((List<?>) object).remove(arg);
+            int position = indexOfValue((List<?>) object, arg, false);
+            if (position < 0) return false;
+            ((List<?>) object).remove(position);
+            return true;
         }
         if (methodName.equals("removeAt") && object instanceof List<?>) {
             if (arguments.size() != 1) {
@@ -1301,6 +1500,7 @@ public class Interpreter implements Visitor<Object> {
     }
 
     private boolean runLoopIteration(ForStatement forStatement, String identifier, String typeName, Object element) throws ParseException {
+        requireKnownType(typeName, forStatement, this);
         if (!matchesType(typeName, false, element)) {
             throw error(forStatement, "Type mismatch: loop variable '" + identifier + "' of type " + typeName + " got " + getTypeName(element));
         }
@@ -1365,32 +1565,13 @@ public class Interpreter implements Visitor<Object> {
     @Override
     public Object visitInterpolatedString(InterpolatedString interpolatedString) throws ParseException {
         StringBuilder result = new StringBuilder();
-
         List<Node> expressions = interpolatedString.getExpressions();
-        String rawString = interpolatedString.getRawString();
-        int expressionIndex = 0;
-
-        for (int i = 0; i < rawString.length(); i++) {
-            if (rawString.charAt(i) == '$' && i + 1 < rawString.length() && rawString.charAt(i + 1) == '{') {
-                int depth = 0;
-                boolean inNestedString = false;
-                for (i = i + 1; i < rawString.length(); i++) {
-                    char ch = rawString.charAt(i);
-                    if (ch == '"') {
-                        inNestedString = !inNestedString;
-                    } else if (!inNestedString && ch == '{') {
-                        depth++;
-                    } else if (!inNestedString && ch == '}' && --depth == 0) {
-                        break;
-                    }
-                }
-                Object value = expressions.get(expressionIndex++).accept(this);
-                result.append(formatValue(value));
-            } else {
-                result.append(rawString.charAt(i));
-            }
+        List<String> segments = interpolatedString.getSegments();
+        for (int i = 0; i < expressions.size(); i++) {
+            result.append(segments.get(i));
+            result.append(formatValue(expressions.get(i).accept(this)));
         }
-
+        result.append(segments.get(segments.size() - 1));
         return result.toString();
     }
 
@@ -1423,7 +1604,6 @@ public class Interpreter implements Visitor<Object> {
     public Object visitAssignmentStatement(AssignmentStatement assignmentStatement) throws ParseException {
         Node target = assignmentStatement.getTarget();
         Token operator = assignmentStatement.getOperator();
-        Object value = assignmentStatement.getValue().accept(this);
 
         if (target instanceof Identifier identifierNode) {
             String identifier = identifierNode.getName();
@@ -1433,6 +1613,7 @@ public class Interpreter implements Visitor<Object> {
             if (!env.hasVariable(identifier)) {
                 throw error(assignmentStatement, "Undefined variable '" + identifier + "'");
             }
+            Object value = assignmentStatement.getValue().accept(this);
 
             Object currentValue = findVariable(identifier);
             Object newValue = operator.getToken() == Token.TokenType.EQUAL
@@ -1447,57 +1628,44 @@ public class Interpreter implements Visitor<Object> {
             validateConstraint(identifier, newValue, assignmentStatement);
 
             env.updateVariable(identifier, newValue);
-        } else if (target instanceof ArrayAccess arrayAccess) {
+            return null;
+        }
+
+        Object container;
+        Object indexObj;
+        Environment.TypeSpec elementType;
+        String targetLabel;
+        if (target instanceof ArrayAccess arrayAccess) {
             String identifier = arrayAccess.getIdentifier();
-            Object indexObj = arrayAccess.getIndex().accept(this);
-            Boolean isConstant = findConstant(identifier) != null;
-            Object array = isConstant ? findConstant(identifier) : findVariable(identifier);
-            if (array == null) {
+            if (!env.hasVariable(identifier) && !env.hasConstant(identifier)) {
                 throw error(assignmentStatement, "Undefined array '" + identifier + "'");
             }
-            if (isConstant) {
-                throw error(assignmentStatement, "Cannot reassign to constant array '" + identifier + "'");
-            }
-            if (!(array instanceof List<?> list)) {
-                throw error(assignmentStatement, "Variable '" + identifier + "' is not an array");
-            }
-            if (!Num.isNumber(indexObj)) {
-                throw error(assignmentStatement, "Array index must be a number");
-            }
-            int index = toIndex(indexObj, assignmentStatement);
-            if (index < 0 || index >= list.size()) {
-                throw error(assignmentStatement, "Array index out of bounds");
-            }
-
-            Object currentValue = list.get(index);
-            Object newValue = operator.getToken() == Token.TokenType.EQUAL
-                    ? value
-                    : computeCompoundAssignment(currentValue, operator, value, assignmentStatement);
-
-            Environment.TypeSpec type = env.findType(identifier);
-            if (type != null && type.isArray() && !matchesType(type.name(), false, newValue)) {
-                throw error(assignmentStatement, "Type mismatch: cannot assign " + getTypeName(newValue) + " to element of '" + identifier + "' of type " + typeLabel(type.name(), true));
-            }
-
-            ((List<Object>) array).set(index, newValue);
+            container = env.hasVariable(identifier) ? findVariable(identifier) : findConstant(identifier);
+            indexObj = arrayAccess.getIndex().accept(this);
+            elementType = elementTypeOf(new Identifier(identifier, arrayAccess.getLine(), arrayAccess.getColumn()));
+            targetLabel = identifier;
         } else if (target instanceof IndexExpr indexExpr) {
-            Object container = indexExpr.getTarget().accept(this);
-            Object indexObj = indexExpr.getIndex().accept(this);
-            if (!(container instanceof List<?> list)) {
-                throw error(assignmentStatement, "Only array elements can be assigned by index");
-            }
-            int index = toIndex(indexObj, assignmentStatement);
-            if (index < 0 || index >= list.size()) {
-                throw error(assignmentStatement, "Array index out of bounds");
-            }
-            Object newValue = operator.getToken() == Token.TokenType.EQUAL
-                    ? value
-                    : computeCompoundAssignment(list.get(index), operator, value, assignmentStatement);
-            ((List<Object>) list).set(index, newValue);
+            container = indexExpr.getTarget().accept(this);
+            indexObj = indexExpr.getIndex().accept(this);
+            elementType = elementTypeOf(indexExpr.getTarget());
+            targetLabel = "array";
         } else {
             throw error(assignmentStatement, "Invalid assignment target");
         }
 
+        List<Object> list = requireMutableList(container, assignmentStatement);
+        int index = toIndex(indexObj, assignmentStatement);
+        if (index < 0 || index >= list.size()) {
+            throw error(assignmentStatement, "Array index out of bounds");
+        }
+        Object value = assignmentStatement.getValue().accept(this);
+        Object newValue = operator.getToken() == Token.TokenType.EQUAL
+                ? value
+                : computeCompoundAssignment(list.get(index), operator, value, assignmentStatement);
+        if (elementType != null && !matchesType(elementType.name(), false, newValue)) {
+            throw error(assignmentStatement, "Type mismatch: cannot assign " + getTypeName(newValue) + " to element of '" + targetLabel + "' of type " + typeLabel(elementType.name(), true));
+        }
+        list.set(index, newValue);
         return null;
     }
 
@@ -1510,10 +1678,13 @@ public class Interpreter implements Visitor<Object> {
     @Override
     public Object visitImportStatement(ImportStatement importStatement) throws ParseException {
         String moduleName = importStatement.getModuleName();
-        Interpreter module = loadModule(moduleName);
+        Interpreter module = loadModule(moduleName, importStatement);
         List<ImportItem> items = importStatement.getItems();
 
         if (items.isEmpty()) {
+            if (env.hasVariable(moduleName) || env.hasConstant(moduleName) || functions.containsKey(moduleName)) {
+                throw error(importStatement, "Name conflict: '" + moduleName + "' is already defined");
+            }
             importedModules.add(moduleName);
             return null;
         }
@@ -1525,10 +1696,10 @@ public class Interpreter implements Visitor<Object> {
             if (name.equals("*")) {
                 Map<String, Object> currentVars = env.getTopVariableScope();
                 for (Map.Entry<String, Object> entry : module.env.getGlobalVariableScope().entrySet()) {
-                    if (currentVars.containsKey(entry.getKey()) || functions.containsKey(entry.getKey())) {
+                    if (isNameTaken(entry.getKey())) {
                         throw error(importStatement, "Name conflict: '" + entry.getKey() + "' is already defined. Use 'as' alias to resolve: from " + moduleName + " import " + entry.getKey() + " as <alias>");
                     }
-                    currentVars.put(entry.getKey(), entry.getValue());
+                    currentVars.put(entry.getKey(), new Environment.ModuleVarRef(module.env.global(), entry.getKey()));
                 }
                 Map<String, Object> currentConsts = env.getTopConstantScope();
                 for (Map.Entry<String, Object> entry : module.env.getGlobalConstantScope().entrySet()) {
@@ -1538,23 +1709,39 @@ public class Interpreter implements Visitor<Object> {
                     currentConsts.put(entry.getKey(), entry.getValue());
                 }
                 for (Map.Entry<String, FunctionDecl> entry : module.functions.entrySet()) {
-                    if (functions.containsKey(entry.getKey()) || nativeFunctions.containsKey(entry.getKey())) {
+                    if (isNameTaken(entry.getKey())) {
                         throw error(importStatement, "Name conflict: '" + entry.getKey() + "' is already defined. Use 'as' alias to resolve: from " + moduleName + " import " + entry.getKey() + " as <alias>");
                     }
                     currentVars.put(entry.getKey(), new EzyFunction(entry.getValue(), module.env.global(), module));
                 }
                 for (Map.Entry<String, NativeFunction> entry : module.nativeFunctions.entrySet()) {
-                    if (nativeFunctions.containsKey(entry.getKey()) || functions.containsKey(entry.getKey())) {
+                    if (isNameTaken(entry.getKey())) {
                         throw error(importStatement, "Name conflict: '" + entry.getKey() + "' is already imported. Use 'as' alias to resolve: from " + moduleName + " import " + entry.getKey() + " as <alias>");
                     }
                     nativeFunctions.put(entry.getKey(), entry.getValue());
                 }
+                for (Map.Entry<String, EzyClass> entry : module.classes.entrySet()) {
+                    if (classes.containsKey(entry.getKey()) || interfaces.containsKey(entry.getKey())) {
+                        throw error(importStatement, "Name conflict: type '" + entry.getKey() + "' is already defined");
+                    }
+                    classes.put(entry.getKey(), entry.getValue());
+                }
+                for (Map.Entry<String, EzyInterface> entry : module.interfaces.entrySet()) {
+                    if (classes.containsKey(entry.getKey()) || interfaces.containsKey(entry.getKey())) {
+                        throw error(importStatement, "Name conflict: type '" + entry.getKey() + "' is already defined");
+                    }
+                    interfaces.put(entry.getKey(), entry.getValue());
+                }
             } else {
-                if (env.hasVariableInCurrentScope(alias) || env.hasConstantInCurrentScope(alias) || functions.containsKey(alias) || nativeFunctions.containsKey(alias)) {
+                if (isNameTaken(alias) || classes.containsKey(alias) || interfaces.containsKey(alias)) {
                     throw error(importStatement, "Name conflict: '" + alias + "' is already defined. Use 'as' alias to resolve: from " + moduleName + " import " + name + " as <alias>");
                 }
                 if (module.env.getGlobalVariableScope().containsKey(name)) {
-                    setVariable(alias, module.env.getGlobalVariableScope().get(name));
+                    setVariable(alias, new Environment.ModuleVarRef(module.env.global(), name));
+                } else if (module.classes.containsKey(name)) {
+                    classes.put(alias, module.classes.get(name));
+                } else if (module.interfaces.containsKey(name)) {
+                    interfaces.put(alias, module.interfaces.get(name));
                 } else if (module.env.getGlobalConstantScope().containsKey(name)) {
                     setConstant(alias, module.env.getGlobalConstantScope().get(name));
                 } else if (module.functions.containsKey(name)) {
@@ -1570,6 +1757,11 @@ public class Interpreter implements Visitor<Object> {
         return null;
     }
 
+    private boolean isNameTaken(String name) {
+        return env.hasVariableInCurrentScope(name) || env.hasConstantInCurrentScope(name)
+                || functions.containsKey(name) || nativeFunctions.containsKey(name) || importedModules.contains(name);
+    }
+
     @Override
     public Object visitTypeCheckExpr(TypeCheckExpr expr) throws ParseException {
         Object value = expr.getExpression().accept(this);
@@ -1583,13 +1775,11 @@ public class Interpreter implements Visitor<Object> {
             case "array" -> value instanceof List;
             case "func" -> value instanceof EzyFunction || value instanceof NativeFunction;
             case "null" -> value == null;
+            case "any" -> true;
             default -> {
-                if (value instanceof EzyInstance instance) {
-                    EzyClass cls = classes.get(targetType);
-                    if (cls != null) yield instance.isInstanceOf(cls);
-                    EzyInterface iface = interfaces.get(targetType);
-                    if (iface != null) yield instance.isInstanceOfInterface(targetType);
-                }
+                EzyClass cls = classes.get(targetType);
+                if (cls != null) yield value instanceof EzyInstance instance && instance.isInstanceOf(cls);
+                if (interfaces.containsKey(targetType)) yield value instanceof EzyInstance instance && instance.isInstanceOfInterface(targetType);
                 throw error(expr, "Unknown type: " + targetType);
             }
         };
@@ -1631,7 +1821,14 @@ public class Interpreter implements Visitor<Object> {
                     }
                     throw error(expr, "Cannot cast " + getTypeName(value) + " to char");
                 }
-                default -> throw error(expr, "Unknown type: " + targetType);
+                case "any" -> value;
+                default -> {
+                    if (!classes.containsKey(targetType) && !interfaces.containsKey(targetType)) {
+                        throw error(expr, "Unknown type: " + targetType);
+                    }
+                    if (value == null || matchesType(targetType, false, value)) yield value;
+                    throw error(expr, "Cannot cast " + getTypeName(value) + " to " + targetType);
+                }
             };
         } catch (Exception e) {
             throw error(expr, "Cast failed: " + e.getMessage());
@@ -1661,24 +1858,23 @@ public class Interpreter implements Visitor<Object> {
 
     @Override
     public Object visitBreakStatement(BreakStatement breakStatement) throws ParseException {
-        throw new BreakException(fileName, breakStatement);
+        throw new BreakException(fileName, breakStatement, getErrorLine(breakStatement.getLine()));
     }
 
     @Override
     public Object visitContinueStatement(ContinueStatement continueStatement) throws ParseException {
-        throw new ContinueException(fileName, continueStatement);
+        throw new ContinueException(fileName, continueStatement, getErrorLine(continueStatement.getLine()));
     }
 
     private static class BreakException extends ParseException {
-        BreakException(String fileName, BreakStatement breakStatement) {
-            super(fileName, "Break statement outside of loop", breakStatement.getLine(), breakStatement.getColumn(), "");
-
+        BreakException(String fileName, BreakStatement breakStatement, String errorLine) {
+            super(fileName, "Break statement outside of loop", breakStatement.getLine(), breakStatement.getColumn(), errorLine);
         }
     }
 
     private static class ContinueException extends ParseException {
-        ContinueException(String fileName, ContinueStatement continueStatement) {
-            super(fileName, "Continue statement outside of loop", continueStatement.getLine(), continueStatement.getColumn(), "");
+        ContinueException(String fileName, ContinueStatement continueStatement, String errorLine) {
+            super(fileName, "Continue statement outside of loop", continueStatement.getLine(), continueStatement.getColumn(), errorLine);
         }
     }
 
@@ -1692,16 +1888,16 @@ public class Interpreter implements Visitor<Object> {
     public Object visitTestBlock(TestBlock testBlock) throws ParseException {
         if (!testMode) return null;
 
+        enterScope();
         try {
-            enterScope();
             testBlock.getBody().accept(this);
-            exitScope();
             testsPassed++;
             System.out.println("[PASS] " + testBlock.getName());
-        } catch (AssertionFailedException e) {
-            exitScope();
+        } catch (ParseException e) {
             testsFailed++;
             System.out.println("[FAIL] " + testBlock.getName() + " - " + e.getMessage());
+        } finally {
+            exitScope();
         }
         return null;
     }
@@ -1726,6 +1922,15 @@ public class Interpreter implements Visitor<Object> {
     public Object visitClassDecl(ClassDecl classDecl) throws ParseException {
         String name = classDecl.getName();
         EzyClass parentEzyClass = null;
+        if (classes.containsKey(name) || interfaces.containsKey(name)) {
+            throw error(classDecl, "Type '" + name + "' is already defined");
+        }
+        java.util.Set<String> methodNames = new java.util.HashSet<>();
+        for (FunctionDecl method : classDecl.getMethods()) {
+            if (!methodNames.add(method.getName())) {
+                throw error(method, "Method '" + method.getName() + "' is already defined in class '" + name + "'");
+            }
+        }
 
         if (classDecl.getParentClass() != null) {
             parentEzyClass = classes.get(classDecl.getParentClass());
@@ -1747,8 +1952,12 @@ public class Interpreter implements Visitor<Object> {
         for (FunctionDecl method : classDecl.getMethods()) {
             boolean isOverride = method.isOverride() || hasDecorator(method, "override");
             if (isOverride) {
-                if (parentEzyClass == null || parentEzyClass.findMethod(method.getName()) == null) {
+                FunctionDecl parentMethod = parentEzyClass == null ? null : parentEzyClass.findMethod(method.getName());
+                if (parentMethod == null) {
                     throw error(method, "Method '" + method.getName() + "' is marked @override but no parent method found");
+                }
+                if (!sameSignature(parentMethod, method)) {
+                    throw error(method, "Method '" + method.getName() + "' does not match the signature of the parent method it overrides");
                 }
             } else if (parentEzyClass != null && parentEzyClass.findMethod(method.getName()) != null) {
                 throw error(method, "'" + method.getName() + "' already exists in parent class '" + parentEzyClass.getName() + "'. Use '@override' to redefine.");
@@ -1768,6 +1977,7 @@ public class Interpreter implements Visitor<Object> {
             }
         }
 
+        ezyClass.setOwner(this);
         classes.put(name, ezyClass);
         classDecls.put(name, classDecl);
         return null;
@@ -1775,6 +1985,9 @@ public class Interpreter implements Visitor<Object> {
 
     @Override
     public Object visitInterfaceDecl(InterfaceDecl interfaceDecl) throws ParseException {
+        if (classes.containsKey(interfaceDecl.getName()) || interfaces.containsKey(interfaceDecl.getName())) {
+            throw error(interfaceDecl, "Type '" + interfaceDecl.getName() + "' is already defined");
+        }
         interfaces.put(interfaceDecl.getName(), new EzyInterface(interfaceDecl.getName(), interfaceDecl.getMethods()));
         return null;
     }
@@ -1792,7 +2005,8 @@ public class Interpreter implements Visitor<Object> {
             args.add(arg.accept(this));
         }
 
-        return instantiateClass(ezyClass, args, newExpr);
+        Interpreter owner = ezyClass.getOwner() instanceof Interpreter o ? o : this;
+        return owner.instantiateClass(ezyClass, args, newExpr, this);
     }
 
     private static boolean sameSignature(FunctionDecl expected, FunctionDecl actual) {
@@ -1807,13 +2021,17 @@ public class Interpreter implements Visitor<Object> {
                 && Boolean.TRUE.equals(expected.getIsReturnTypeArray()) == Boolean.TRUE.equals(actual.getIsReturnTypeArray());
     }
 
-    private EzyInstance instantiateClass(EzyClass ezyClass, List<Object> args, Node errorNode) throws ParseException {
+    private EzyInstance instantiateClass(EzyClass ezyClass, List<Object> args, Node errorNode, Interpreter site) throws ParseException {
         EzyInstance instance = new EzyInstance(ezyClass);
-        initInstance(instance, ezyClass, args, errorNode);
+        initInstance(instance, ezyClass, args, errorNode, site);
         return instance;
     }
 
-    private void initInstance(EzyInstance instance, EzyClass cls, List<Object> args, Node errorNode) throws ParseException {
+    private void initInstance(EzyInstance instance, EzyClass cls, List<Object> args, Node errorNode, Interpreter site) throws ParseException {
+        if (cls.getOwner() instanceof Interpreter owner && owner != this) {
+            owner.initInstance(instance, cls, args, errorNode, site);
+            return;
+        }
         List<ClassField> params = cls.getConstructorParams();
         int requiredParams = 0;
         for (ClassField p : params) {
@@ -1821,16 +2039,22 @@ public class Interpreter implements Visitor<Object> {
         }
 
         if (args.size() < requiredParams || args.size() > params.size()) {
-            throw error(errorNode, "Expected " + (requiredParams == params.size() ? String.valueOf(requiredParams) : requiredParams + "-" + params.size())
+            throw site.error(errorNode, "Expected " + (requiredParams == params.size() ? String.valueOf(requiredParams) : requiredParams + "-" + params.size())
                     + " arguments but got " + args.size());
         }
 
         List<Object> values = new ArrayList<>();
-        for (int i = 0; i < params.size(); i++) {
-            ClassField param = params.get(i);
-            Object value = i < args.size() ? args.get(i) : param.getDefaultValue().accept(this);
-            checkFieldType(cls, param, value, errorNode);
-            values.add(value);
+        Environment.Scope defaultsScope = env.enterCall(env.global());
+        try {
+            for (int i = 0; i < params.size(); i++) {
+                ClassField param = params.get(i);
+                Object value = i < args.size() ? args.get(i) : param.getDefaultValue().accept(this);
+                checkFieldType(cls, param, value, errorNode, site);
+                values.add(value);
+                setVariable(param.getName(), value);
+            }
+        } finally {
+            env.restore(defaultsScope);
         }
 
         EzyClass parent = cls.getParentClass();
@@ -1850,7 +2074,7 @@ public class Interpreter implements Visitor<Object> {
             } finally {
                 env.restore(saved);
             }
-            initInstance(instance, parent, parentArgs, errorNode);
+            initInstance(instance, parent, parentArgs, errorNode, site);
         }
 
         for (int i = 0; i < params.size(); i++) {
@@ -1864,7 +2088,7 @@ public class Interpreter implements Visitor<Object> {
         try {
             for (ClassField field : cls.getFields()) {
                 Object value = field.getDefaultValue() != null ? field.getDefaultValue().accept(this) : null;
-                checkFieldType(cls, field, value, errorNode);
+                checkFieldType(cls, field, value, errorNode, site);
                 instance.setField(field.getName(), value);
             }
         } finally {
@@ -1873,10 +2097,11 @@ public class Interpreter implements Visitor<Object> {
         }
     }
 
-    private void checkFieldType(EzyClass cls, ClassField field, Object value, Node errorNode) throws ParseException {
+    private void checkFieldType(EzyClass cls, ClassField field, Object value, Node errorNode, Interpreter site) throws ParseException {
         String type = field.getType().getValue();
+        requireKnownType(type, errorNode, site);
         if (!matchesType(type, field.isArray(), value)) {
-            throw error(errorNode, "Type mismatch: field '" + field.getName() + "' of " + cls.getName() + " expects " + typeLabel(type, field.isArray()) + " but got " + getTypeName(value));
+            throw site.error(errorNode, "Type mismatch: field '" + field.getName() + "' of " + cls.getName() + " expects " + typeLabel(type, field.isArray()) + " but got " + getTypeName(value));
         }
     }
 
@@ -1898,7 +2123,7 @@ public class Interpreter implements Visitor<Object> {
         }
         ClassField field = findFieldDecl(instance.getEzyClass(), property);
         if (field != null) {
-            checkFieldType(instance.getEzyClass(), field, value, node);
+            checkFieldType(instance.getEzyClass(), field, value, node, this);
         }
         instance.setField(property, value);
     }
@@ -1909,6 +2134,9 @@ public class Interpreter implements Visitor<Object> {
             throw error(selfExpr, "'self' can only be used inside a class method");
         }
         if (selfExpr.getFieldName() != null) {
+            if (!currentInstance.hasField(selfExpr.getFieldName())) {
+                throw error(selfExpr, "Property '" + selfExpr.getFieldName() + "' not found on " + currentInstance.getEzyClass().getName());
+            }
             return currentInstance.getField(selfExpr.getFieldName());
         }
         return currentInstance;
@@ -1935,7 +2163,7 @@ public class Interpreter implements Visitor<Object> {
             args.add(arg.accept(this));
         }
 
-        return callMethod(currentInstance, method, args, parent, parentExpr);
+        return callMethod(currentInstance, method, args, parent.findDeclaringClass(methodName), parentExpr);
     }
 
     @Override
@@ -2018,6 +2246,9 @@ public class Interpreter implements Visitor<Object> {
 
     @Override
     public Object visitDecoratorDecl(DecoratorDecl decoratorDecl) throws ParseException {
+        if (customDecorators.containsKey(decoratorDecl.getName())) {
+            throw error(decoratorDecl, "Decorator '" + decoratorDecl.getName() + "' is already defined");
+        }
         customDecorators.put(decoratorDecl.getName(), decoratorDecl);
         return null;
     }
@@ -2031,15 +2262,16 @@ public class Interpreter implements Visitor<Object> {
     }
 
     private Object callMethod(EzyInstance instance, FunctionDecl method, List<Object> args, EzyClass methodClass, Node errorNode) throws ParseException {
-        EzyInstance prevInstance = currentInstance;
-        EzyClass prevClass = currentClass;
-        currentInstance = instance;
-        currentClass = methodClass;
+        Interpreter owner = methodClass.getOwner() instanceof Interpreter o ? o : this;
+        EzyInstance prevInstance = owner.currentInstance;
+        EzyClass prevClass = owner.currentClass;
+        owner.currentInstance = instance;
+        owner.currentClass = methodClass;
         try {
-            return invokeFunction(method.getName(), method, env.global(), args, errorNode, this);
+            return owner.invokeFunction(method.getName(), method, owner.env.global(), args, errorNode, this);
         } finally {
-            currentInstance = prevInstance;
-            currentClass = prevClass;
+            owner.currentInstance = prevInstance;
+            owner.currentClass = prevClass;
         }
     }
 }

@@ -24,6 +24,7 @@ public class Parser {
     public Program parse() throws ParseException {
         List<Node> statements = new ArrayList<>();
         while (!isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             statements.add(parseStatement());
         }
 
@@ -162,10 +163,27 @@ public class Parser {
         return new ReturnStatement(value, returnToken.getLine(), returnToken.getColumn());
     }
 
+    private boolean onSameLine() {
+        return current > 0 && !isAtEnd() && peek().getLine() == previous().getLine();
+    }
+
+    private boolean isAssignableTarget(Node node) {
+        return node instanceof Identifier || node instanceof ArrayAccess || node instanceof IndexExpr
+                || node instanceof PropertyAccess || (node instanceof SelfExpr self && self.getFieldName() != null);
+    }
+
+    private Node parsePostfixIncrement(Node expr) {
+        if (isAssignableTarget(expr) && onSameLine() && match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
+            Token operator = previous();
+            return new IncrementDecrementExpr(expr, operator, false, operator.getLine(), operator.getColumn());
+        }
+        return expr;
+    }
+
     private Node parseCallSuffix(Node callee) throws ParseException {
         Node expr = callee;
         while (true) {
-            if (check(Token.TokenType.LEFT_PAREN)) {
+            if (check(Token.TokenType.LEFT_PAREN) && onSameLine()) {
                 Token paren = advance();
                 List<Node> arguments = new ArrayList<>();
                 if (!check(Token.TokenType.RIGHT_PAREN)) {
@@ -175,7 +193,7 @@ public class Parser {
                 }
                 consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
                 expr = new CallExpr(expr, arguments, paren.getLine(), paren.getColumn());
-            } else if (check(Token.TokenType.LEFT_BRACKET)) {
+            } else if (check(Token.TokenType.LEFT_BRACKET) && onSameLine()) {
                 Token bracket = advance();
                 Node index = parseExpression();
                 consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
@@ -247,8 +265,10 @@ public class Parser {
 
         List<SwitchCase> cases = new ArrayList<>();
         Node defaultCase = null;
+        int defaultIndex = -1;
 
         while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             if (match(Token.TokenType.CASE)) {
                 Node value = parseExpression();
 
@@ -275,6 +295,7 @@ public class Parser {
                 }
 
                 consume(Token.TokenType.COLON, "Expected ':' after 'default'");
+                defaultIndex = cases.size();
 
                 if (match(Token.TokenType.LEFT_BRACE)) {
                     defaultCase = parseBlock();
@@ -287,13 +308,14 @@ public class Parser {
         }
 
         consume(Token.TokenType.RIGHT_BRACE, "Expected '}' after switch cases");
-        return new SwitchStatement(expression, cases, defaultCase, switchToken.getLine(), switchToken.getColumn());
+        return new SwitchStatement(expression, cases, defaultCase, defaultIndex, switchToken.getLine(), switchToken.getColumn());
     }
 
     private Node parseBlock() throws ParseException {
         List<Node> statements = new ArrayList<>();
 
         while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             statements.add(parseStatement());
         }
 
@@ -354,6 +376,9 @@ public class Parser {
         Node thenBranch = parseStatement();
         Node elseBranch = null;
 
+        while (check(Token.TokenType.SEMICOLON) && checkNext(Token.TokenType.ELSE)) {
+            advance();
+        }
         if (match(Token.TokenType.ELSE)) {
             elseBranch = parseStatement();
         }
@@ -455,7 +480,7 @@ public class Parser {
     private Node parsePrintStatement() throws ParseException {
         boolean isPrintln = previous().getToken() == Token.TokenType.PRINTLN;
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after 'print'");
-        Node expression = parseStringInterpolation(parseExpression());
+        Node expression = parseExpression();
         consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after expression");
         return new PrintStatement(expression, isPrintln, expression.getLine(), expression.getColumn());
     }
@@ -467,57 +492,58 @@ public class Parser {
 
         String rawString = (String) literal.getValue();
         List<Node> interpolatedExpressions = new ArrayList<>();
-        StringBuilder baseString = new StringBuilder();
+        List<String> segments = new ArrayList<>();
+        StringBuilder segment = new StringBuilder();
 
-
-        int startIndex = 0;
-        while (true) {
-            int dollarIndex = rawString.indexOf("${", startIndex);
-
-            if (dollarIndex == -1) {
-                baseString.append(rawString.substring(startIndex));
-                break;
+        int i = 0;
+        while (i < rawString.length()) {
+            char ch = rawString.charAt(i);
+            if (ch != '$' || i + 1 >= rawString.length() || rawString.charAt(i + 1) != '{') {
+                segment.append(ch == Lexer.LITERAL_DOLLAR ? '$' : ch);
+                i++;
+                continue;
             }
 
-            baseString.append(rawString, startIndex, dollarIndex);
-
-            int endIndex = -1;
             int depth = 1;
-            boolean inNestedString = false;
-            for (int i = dollarIndex + 2; i < rawString.length(); i++) {
-                char ch = rawString.charAt(i);
-                if (ch == '"') {
-                    inNestedString = !inNestedString;
-                } else if (!inNestedString) {
-                    if (ch == '{') depth++;
-                    else if (ch == '}') {
-                        depth--;
-                        if (depth == 0) { endIndex = i; break; }
+            int j = i + 2;
+            char quote = 0;
+            while (j < rawString.length()) {
+                char c = rawString.charAt(j);
+                if (quote != 0) {
+                    if (c == '\\') {
+                        j += 2;
+                        continue;
                     }
+                    if (c == quote) quote = 0;
+                } else if (c == '"' || c == '\'') {
+                    quote = c;
+                } else if (c == '{') {
+                    depth++;
+                } else if (c == '}' && --depth == 0) {
+                    break;
                 }
+                j++;
             }
-            if (endIndex == -1) {
+            if (j >= rawString.length()) {
                 throw new ParseException(fileName, "Unclosed string interpolation expression", literal.getLine(), literal.getColumn(), getErrorLine(literal.getLine()));
             }
 
-            String expressionString = rawString.substring(dollarIndex + 2, endIndex).trim();
-
-
-            Lexer lexer = new Lexer(expressionString);
-            List<Token> tokens = lexer.scanTokens();
-            Parser parser = new Parser(this.fileName, expressionString, tokens);
-            Node parsedExpression = parser.parseExpression();
-
-            interpolatedExpressions.add(parsedExpression);
-
-            startIndex = endIndex + 1;
+            String expressionString = rawString.substring(i + 2, j).trim();
+            if (expressionString.isEmpty()) {
+                throw new ParseException(fileName, "Empty string interpolation expression", literal.getLine(), literal.getColumn(), getErrorLine(literal.getLine()));
+            }
+            Parser parser = new Parser(this.fileName, expressionString, new Lexer(expressionString).scanTokens());
+            interpolatedExpressions.add(parser.parseStandaloneExpression());
+            segments.add(segment.toString());
+            segment.setLength(0);
+            i = j + 1;
         }
+        segments.add(segment.toString());
 
         if (interpolatedExpressions.isEmpty()) {
-            return expression;
-        } else {
-            return new InterpolatedString(rawString, baseString.toString(), interpolatedExpressions, expression.getLine(), expression.getColumn());
+            return new Literal(segments.get(0), "string", literal.getLine(), literal.getColumn());
         }
+        return new InterpolatedString(rawString, String.join("", segments), interpolatedExpressions, segments, literal.getLine(), literal.getColumn());
     }
 
     public Node parseStandaloneExpression() throws ParseException {
@@ -618,7 +644,7 @@ public class Parser {
             Token operator = previous();
             Node operand = parseUnaryExpression();
 
-            if (!(operand instanceof Identifier) && !(operand instanceof ArrayAccess)) {
+            if (!isAssignableTarget(operand)) {
                 throw new ParseException(fileName,
                         "Invalid operand for prefix " + (operator.getToken() == Token.TokenType.PLUS_PLUS ? "increment" : "decrement") + " operator",
                         operand.getLine(), operand.getColumn(), getErrorLine(operand.getLine()));
@@ -632,25 +658,31 @@ public class Parser {
 
     private Node parsePrimary() throws ParseException {
         if (match(Token.TokenType.NEW)) {
-            return parseNewExpr();
+            return parsePostfixIncrement(parseCallSuffix(parseNewExpr()));
         }
         if (match(Token.TokenType.SELF)) {
-            return parseSelfExpr();
+            return parsePostfixIncrement(parseCallSuffix(parseSelfExpr()));
         }
         if (match(Token.TokenType.PARENT)) {
             return parseParentExpr();
         }
         if (match(Token.TokenType.LEFT_BRACKET)) {
-            return parseArrayLiteral();
+            return parseCallSuffix(parseArrayLiteral());
         }
         if (match(Token.TokenType.LEFT_PAREN)) {
             Node inner = parseExpression();
             consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after expression");
-            return parseCallSuffix(inner);
+            return parsePostfixIncrement(parseCallSuffix(inner));
         }
         if (match(Token.TokenType.NUMBER_LITERAL)) {
             Token token = previous();
-            Node literal = new Literal(Num.parse(token.getValue()), "number", token.getLine(), token.getColumn());
+            Object number;
+            try {
+                number = Num.parse(token.getValue());
+            } catch (NumberFormatException e) {
+                throw new ParseException(fileName, "Numeric literal out of range: " + token.getValue(), token.getLine(), token.getColumn(), getErrorLine(token.getLine()));
+            }
+            Node literal = new Literal(number, "number", token.getLine(), token.getColumn());
             if (match(Token.TokenType.DOT)) {
                 Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
                 consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
@@ -689,7 +721,7 @@ public class Parser {
         if (match(Token.TokenType.FUNC)) {
             Token token = previous();
             FunctionDecl function = parseFunctionRest("<lambda>", false, false, new ArrayList<>());
-            return new FunctionExpr(function, token.getLine(), token.getColumn());
+            return parseCallSuffix(new FunctionExpr(function, token.getLine(), token.getColumn()));
         }
         if (match(Token.TokenType.BOOLEAN_LITERAL)) {
             Token token = previous();
@@ -711,7 +743,8 @@ public class Parser {
         if (match(Token.TokenType.IDENTIFIER)) {
             Token token = previous();
             Node expr;
-            if (match(Token.TokenType.LEFT_PAREN)) {
+            if (check(Token.TokenType.LEFT_PAREN) && onSameLine()) {
+                advance();
                 List<Node> arguments = new ArrayList<>();
                 if (!check(Token.TokenType.RIGHT_PAREN)) {
                     do {
@@ -720,7 +753,8 @@ public class Parser {
                 }
                 consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
                 expr = new FunctionCall(token.getValue(), arguments, token.getLine(), token.getColumn());
-            } else if (match(Token.TokenType.LEFT_BRACKET)) {
+            } else if (check(Token.TokenType.LEFT_BRACKET) && onSameLine()) {
+                advance();
                 Node index = parseExpression();
                 consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
                 expr = new ArrayAccess(token.getValue(), index, token.getLine(), token.getColumn());
@@ -759,18 +793,7 @@ public class Parser {
             }
 
             expr = parseCallSuffix(expr);
-
-            if ((expr instanceof Identifier || expr instanceof ArrayAccess) && match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
-                Token operator = previous();
-                if (!(expr instanceof Identifier) && !(expr instanceof ArrayAccess)) {
-                    throw new ParseException(fileName,
-                            "Invalid operand for postfix " + (operator.getToken() == Token.TokenType.PLUS_PLUS ? "increment" : "decrement") + " operator",
-                            expr.getLine(), expr.getColumn(), getErrorLine(expr.getLine()));
-                }
-                return new IncrementDecrementExpr(expr, operator, false, operator.getLine(), operator.getColumn());
-            }
-
-            return expr;
+            return parsePostfixIncrement(expr);
         }
 
         throw new ParseException(fileName, "Expected expression", peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));

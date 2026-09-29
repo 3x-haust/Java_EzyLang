@@ -15,9 +15,9 @@ println("fib(50) = ${fib(50)}")
 ## 실행
 
 ```bash
-java -jar ezylang-4.0.0.jar <파일명>.ezy
+java -jar ezylang-4.1.0.jar <파일명>.ezy
 
-java -jar ezylang-4.0.0.jar test <파일명>.ezy
+java -jar ezylang-4.1.0.jar test <파일명>.ezy
 ```
 
 ## 빌드
@@ -54,7 +54,7 @@ $MAX_SIZE: number = 100
 | `void` | 반환값 없음 | 함수 반환 타입 |
 | `null` | 널 (모든 타입의 변수에 대입 가능) | `null` |
 
-선언한 타입은 재대입할 때도 검사합니다. 함수·메서드의 매개변수와 반환 타입, 클래스 필드, for 루프 변수 타입도 실행 중에 검사합니다.
+선언한 타입은 재대입할 때도 검사합니다. 함수·메서드의 매개변수와 반환 타입, 클래스 필드, for 루프 변수 타입도 실행 중에 검사합니다. 존재하지 않는 타입 이름이나 데코레이터를 쓰면 에러입니다.
 
 ```
 x: number = 1
@@ -120,7 +120,12 @@ text[0]
 '작은따옴표 문자열'
 text.repeat(2)
 text.split(", ")
+
+println("가격: \${price}")   // \$ 는 보간하지 않고 $ 그대로 출력
 ```
+
+문장은 줄바꿈으로 구분하며, 한 줄에 여러 문장을 쓸 때는 `;`를 사용합니다.
+다음 줄이 `(`나 `[`로 시작하면 앞 줄에 이어지지 않고 새 문장으로 취급합니다.
 
 ### 출력
 
@@ -282,6 +287,8 @@ switch (grade) {
 }
 ```
 
+`default`는 적힌 위치에서 실행되며, 콜론 스타일은 `break`를 만날 때까지 아래 case로 이어집니다.
+
 ### 타입 체크 / 캐스팅
 
 ```
@@ -331,6 +338,11 @@ from mylib import add, $PI
 println(add(3, 4))
 println(PI)
 ```
+
+- 모듈의 클래스와 인터페이스도 import할 수 있습니다: `from shapes import Circle`
+- import한 변수는 모듈의 변수와 연결되어 있어, 모듈에서 값이 바뀌면 그대로 보입니다.
+- 같은 모듈은 프로그램 전체에서 한 번만 로드되며, 순환 import는 에러입니다.
+- 이미 있는 이름과 겹치면 `as`로 별칭을 지정해야 합니다.
 
 ### 주석
 
@@ -541,7 +553,7 @@ func testAdd(): void {
 ```
 
 ```bash
-java -jar ezylang-4.0.0.jar test app.ezy
+java -jar ezylang-4.1.0.jar test app.ezy
 # [PASS] 덧셈 테스트
 # === 1 passed, 0 failed ===
 ```
