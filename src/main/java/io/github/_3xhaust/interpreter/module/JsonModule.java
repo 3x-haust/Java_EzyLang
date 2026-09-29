@@ -1,5 +1,7 @@
 package io.github._3xhaust.interpreter.module;
 
+import io.github._3xhaust.interpreter.runtime.Num;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,7 +12,13 @@ public class JsonModule {
         nativeFunctions.put("parse", args -> {
             String json = String.valueOf(args.get(0)).trim();
             try {
-                return parseValue(json, new int[]{0});
+                int[] pos = {0};
+                Object value = parseValue(json, pos);
+                skipWhitespace(json, pos);
+                if (pos[0] < json.length()) {
+                    throw new RuntimeException("Unexpected trailing characters at position " + pos[0]);
+                }
+                return value;
             } catch (Exception e) {
                 throw new io.github._3xhaust.ezylang.exception.ParseException("json", "Invalid JSON: " + e.getMessage(), 0, 0, "");
             }
@@ -181,12 +189,7 @@ public class JsonModule {
     private static String toJson(Object value) {
         if (value == null) return "null";
         if (value instanceof Boolean) return value.toString();
-        if (value instanceof Double d) {
-            if (d == Math.floor(d) && !Double.isInfinite(d) && Math.abs(d) < 1e15) {
-                return String.valueOf(d.longValue());
-            }
-            return d.toString();
-        }
+        if (Num.isNumber(value)) return Num.format(value);
         if (value instanceof String s) {
             return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t") + "\"";
         }

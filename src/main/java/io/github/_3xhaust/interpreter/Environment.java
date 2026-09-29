@@ -1,110 +1,143 @@
 package io.github._3xhaust.interpreter;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 
 public class Environment {
-    final ArrayList<HashMap<String, Object>> variableScopes = new ArrayList<>();
-    final ArrayList<HashMap<String, Object>> constantScopes = new ArrayList<>();
-    final ArrayList<HashMap<String, Object>> constraintScopes = new ArrayList<>();
+    public record TypeSpec(String name, boolean isArray) {}
 
-    public Environment() {
-        variableScopes.add(new HashMap<>());
-        constantScopes.add(new HashMap<>());
-        constraintScopes.add(new HashMap<>());
+    public static final class Scope {
+        final HashMap<String, Object> variables = new HashMap<>();
+        final HashMap<String, Object> constants = new HashMap<>();
+        final HashMap<String, Object> constraints = new HashMap<>();
+        final HashMap<String, TypeSpec> types = new HashMap<>();
+        final Scope parent;
+
+        Scope(Scope parent) {
+            this.parent = parent;
+        }
+    }
+
+    private final Scope global = new Scope(null);
+    private Scope current = global;
+
+    public Scope global() {
+        return global;
+    }
+
+    public Scope current() {
+        return current;
+    }
+
+    public boolean isGlobal() {
+        return current == global;
     }
 
     public void enterScope() {
-        variableScopes.add(new HashMap<>());
-        constantScopes.add(new HashMap<>());
-        constraintScopes.add(new HashMap<>());
+        current = new Scope(current);
     }
 
     public void exitScope() {
-        if (!variableScopes.isEmpty()) variableScopes.remove(variableScopes.size() - 1);
-        if (!constantScopes.isEmpty()) constantScopes.remove(constantScopes.size() - 1);
-        if (!constraintScopes.isEmpty()) constraintScopes.remove(constraintScopes.size() - 1);
+        if (current.parent != null) current = current.parent;
+    }
+
+    public Scope enterCall(Scope closure) {
+        Scope saved = current;
+        current = new Scope(closure);
+        return saved;
+    }
+
+    public void restore(Scope saved) {
+        current = saved;
+    }
+
+    private Scope resolveVariable(String name) {
+        for (Scope s = current; s != null; s = s.parent) {
+            if (s.variables.containsKey(name)) return s;
+        }
+        return null;
+    }
+
+    private Scope resolveConstant(String name) {
+        for (Scope s = current; s != null; s = s.parent) {
+            if (s.constants.containsKey(name)) return s;
+        }
+        return null;
+    }
+
+    public boolean hasVariable(String name) {
+        return resolveVariable(name) != null;
     }
 
     public Object findVariable(String name) {
-        HashMap<String, Object> top = variableScopes.get(variableScopes.size() - 1);
-        Object val = top.get(name);
-        if (val != null || top.containsKey(name)) return val;
-        for (int i = variableScopes.size() - 2; i >= 0; i--) {
-            HashMap<String, Object> scope = variableScopes.get(i);
-            val = scope.get(name);
-            if (val != null || scope.containsKey(name)) return val;
-        }
-        return null;
+        Scope s = resolveVariable(name);
+        return s == null ? null : s.variables.get(name);
+    }
+
+    public boolean hasConstant(String name) {
+        return resolveConstant(name) != null;
     }
 
     public Object findConstant(String name) {
-        HashMap<String, Object> top = constantScopes.get(constantScopes.size() - 1);
-        Object val = top.get(name);
-        if (val != null || top.containsKey(name)) return val;
-        for (int i = constantScopes.size() - 2; i >= 0; i--) {
-            HashMap<String, Object> scope = constantScopes.get(i);
-            val = scope.get(name);
-            if (val != null || scope.containsKey(name)) return val;
-        }
-        return null;
+        Scope s = resolveConstant(name);
+        return s == null ? null : s.constants.get(name);
     }
 
     public void setVariable(String name, Object value) {
-        variableScopes.get(variableScopes.size() - 1).put(name, value);
+        current.variables.put(name, value);
     }
 
     public void setConstant(String name, Object value) {
-        constantScopes.get(constantScopes.size() - 1).put(name, value);
+        current.constants.put(name, value);
     }
 
     public boolean hasVariableInCurrentScope(String name) {
-        return variableScopes.get(variableScopes.size() - 1).containsKey(name);
+        return current.variables.containsKey(name);
     }
 
     public boolean hasConstantInCurrentScope(String name) {
-        return constantScopes.get(constantScopes.size() - 1).containsKey(name);
+        return current.constants.containsKey(name);
     }
 
     public Object findConstraint(String name) {
-        for (int i = constraintScopes.size() - 1; i >= 0; i--) {
-            if (constraintScopes.get(i).containsKey(name)) {
-                return constraintScopes.get(i).get(name);
-            }
-        }
-        return null;
+        Scope s = resolveVariable(name);
+        return s == null ? null : s.constraints.get(name);
     }
 
     public void setConstraint(String name, Object value) {
-        constraintScopes.get(constraintScopes.size() - 1).put(name, value);
+        current.constraints.put(name, value);
+    }
+
+    public TypeSpec findType(String name) {
+        Scope s = resolveVariable(name);
+        return s == null ? null : s.types.get(name);
+    }
+
+    public void setType(String name, TypeSpec type) {
+        current.types.put(name, type);
     }
 
     public void updateVariable(String name, Object value) {
-        for (int i = variableScopes.size() - 1; i >= 0; i--) {
-            if (variableScopes.get(i).containsKey(name)) {
-                variableScopes.get(i).put(name, value);
-                return;
-            }
-        }
+        Scope s = resolveVariable(name);
+        if (s != null) s.variables.put(name, value);
     }
 
     public void removeVariable(String name) {
-        variableScopes.get(variableScopes.size() - 1).remove(name);
+        current.variables.remove(name);
     }
 
     public HashMap<String, Object> getTopVariableScope() {
-        return variableScopes.get(variableScopes.size() - 1);
+        return current.variables;
     }
 
     public HashMap<String, Object> getTopConstantScope() {
-        return constantScopes.get(constantScopes.size() - 1);
+        return current.constants;
     }
 
     public HashMap<String, Object> getGlobalVariableScope() {
-        return variableScopes.get(0);
+        return global.variables;
     }
 
     public HashMap<String, Object> getGlobalConstantScope() {
-        return constantScopes.get(0);
+        return global.constants;
     }
 }

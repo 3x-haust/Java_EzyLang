@@ -33,7 +33,7 @@ public class OsModule {
         });
 
         nativeFunctions.put("exit", args -> {
-            int code = args.isEmpty() ? 0 : ((Double) args.get(0)).intValue();
+            int code = args.isEmpty() ? 0 : ((Number) args.get(0)).intValue();
             System.exit(code);
             return null;
         });

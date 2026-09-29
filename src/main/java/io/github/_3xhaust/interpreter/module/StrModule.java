@@ -11,8 +11,8 @@ public class StrModule {
         nativeFunctions.put("endsWith", args -> args.get(0).toString().endsWith(args.get(1).toString()));
         nativeFunctions.put("substring", args -> {
             String s = args.get(0).toString();
-            int start = ((Double) args.get(1)).intValue();
-            int end = ((Double) args.get(2)).intValue();
+            int start = ((Number) args.get(1)).intValue();
+            int end = ((Number) args.get(2)).intValue();
             return s.substring(start, end);
         });
         nativeFunctions.put("replace", args -> args.get(0).toString().replace(args.get(1).toString(), args.get(2).toString()));
@@ -21,22 +21,22 @@ public class StrModule {
         nativeFunctions.put("strLength", args -> (double) args.get(0).toString().length());
         nativeFunctions.put("padLeft", args -> {
             String s = args.get(0).toString();
-            int len = ((Double) args.get(1)).intValue();
+            int len = ((Number) args.get(1)).intValue();
             String pad = args.get(2).toString();
             while (s.length() < len) s = pad + s;
             return s;
         });
         nativeFunctions.put("padRight", args -> {
             String s = args.get(0).toString();
-            int len = ((Double) args.get(1)).intValue();
+            int len = ((Number) args.get(1)).intValue();
             String pad = args.get(2).toString();
             while (s.length() < len) s = s + pad;
             return s;
         });
         nativeFunctions.put("reverse", args -> new StringBuilder(args.get(0).toString()).reverse().toString());
         nativeFunctions.put("format", args -> {
-            Double num = (Double) args.get(0);
-            int decimals = ((Double) args.get(1)).intValue();
+            Double num = ((Number) args.get(0)).doubleValue();
+            int decimals = ((Number) args.get(1)).intValue();
             return String.format("%." + decimals + "f", num);
         });
     }

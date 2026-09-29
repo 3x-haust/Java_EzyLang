@@ -15,9 +15,9 @@ println("fib(50) = ${fib(50)}")
 ## 실행
 
 ```bash
-java -jar ezylang-3.0.0.jar <파일명>.ezy
+java -jar ezylang-4.0.0.jar <파일명>.ezy
 
-java -jar ezylang-3.0.0.jar test <파일명>.ezy
+java -jar ezylang-4.0.0.jar test <파일명>.ezy
 ```
 
 ## 빌드
@@ -45,18 +45,31 @@ $MAX_SIZE: number = 100
 
 | 타입 | 설명 | 예시 |
 |------|------|------|
-| `number` | 숫자 (정수, 실수) | `42`, `3.14` |
-| `string` | 문자열 (2글자 이상) | `"hello"` |
-| `char` | 문자 (1글자) | `"A"` |
+| `number` | 숫자. 정수는 크기 제한 없이 정확하게, 소수는 실수로 계산 | `42`, `3.14` |
+| `string` | 문자열 (길이 무관, 빈 문자열 포함) | `"hello"`, `"A"`, `""` |
+| `char` | 1글자 문자열만 허용하는 `string` | `"A"` |
 | `boolean` | 참/거짓 | `true`, `false` |
+| `func` | 함수 값 | `add`, `func(x: number): number { return x }` |
+| `any` | 모든 값 | |
 | `void` | 반환값 없음 | 함수 반환 타입 |
-| `null` | 널 | `null` |
+| `null` | 널 (모든 타입의 변수에 대입 가능) | `null` |
+
+선언한 타입은 재대입할 때도 검사합니다. 함수·메서드의 매개변수와 반환 타입, 클래스 필드, for 루프 변수 타입도 실행 중에 검사합니다.
+
+```
+x: number = 1
+x = "hello"  // 에러: Type mismatch: cannot assign string to 'x' of type number
+
+big: number = 9999999999999999 + 2   // 10000000000000001
+println(7 / 2)                        // 3.5
+println(6 / 3)                        // 2
+```
 
 ### 범위 제한 타입
 
 ```
 age: number(0..150) = 25
-age = 200  // 에러: Value 200.0 is out of range 0.0..150.0
+age = 200  // 에러: Value 200 is out of range 0..150
 
 grade: char("A", "B", "C", "D", "F") = "A"
 grade = "Z"  // 에러: Value 'Z' is not allowed
@@ -76,7 +89,12 @@ a == b     a != b     a < b      a > b      a <= b     a >= b
 a && b     a || b     !a
 
 -x         +x
+
+(a + b) * c
 ```
+
+우선순위(높은 순): 단항(`-` `+` `!`) → `*` `/` `%` → `+` `-` → `is` `as` → 비교 → `&&` → `||`.
+`&&`, `||`는 단락 평가합니다.
 
 #### 연쇄 비교
 
@@ -84,6 +102,8 @@ a && b     a || b     !a
 if (10 < age < 30) { ... }
 if (0 <= score <= 100) { ... }
 ```
+
+가운데 피연산자는 한 번만 평가됩니다.
 
 ### 문자열
 
@@ -96,6 +116,8 @@ println("result = ${math.sqrt(144)}")
 text: string = "Hello, World!"
 text.length()
 text.charAt(0)
+text[0]
+'작은따옴표 문자열'
 text.repeat(2)
 text.split(", ")
 ```
@@ -175,6 +197,10 @@ numbers[0] = 99
 | `clear()` | 전체 제거 |
 | `addAll(arr)` | 배열 합치기 |
 | `join(separator)` | 문자열로 합치기 |
+| `map(fn)` | 각 요소에 함수를 적용한 새 배열 |
+| `filter(fn)` | 함수가 `true`를 반환한 요소만 담은 새 배열 |
+| `reduce(fn, init)` | 누적 계산 |
+| `forEach(fn)` | 각 요소에 함수 실행 |
 
 ### 함수
 
@@ -191,6 +217,31 @@ func factorial(n: number): number {
     if (n <= 1) return 1
     return n * factorial(n - 1)
 }
+```
+
+### 함수 값과 클로저
+
+함수는 값입니다. 변수에 담거나, 인자로 넘기거나, 반환할 수 있습니다.
+함수는 정의된 위치의 변수만 볼 수 있습니다(렉시컬 스코프). 호출한 쪽의 지역변수는 보이지 않습니다.
+
+```
+f: func = add
+println(f(2, 3))
+
+square: func = func(x: number): number { return x * x }
+println([1, 2, 3].map(square))
+
+func makeCounter(): func {
+    count: number = 0
+    return func(): number {
+        count += 1
+        return count
+    }
+}
+
+counter: func = makeCounter()
+counter()
+println(counter())  // 2
 ```
 
 ### 메모이제이션
@@ -490,7 +541,7 @@ func testAdd(): void {
 ```
 
 ```bash
-java -jar ezylang-3.0.0.jar test app.ezy
+java -jar ezylang-4.0.0.jar test app.ezy
 # [PASS] 덧셈 테스트
 # === 1 passed, 0 failed ===
 ```
@@ -695,3 +746,4 @@ status: number = httpStatus(url)
 | `39_json_module.ezy` | json 모듈 (JSON) |
 | `40_http_server.ezy` | http 모듈 (서버) |
 | `41_net_module.ezy` | net 모듈 (HTTP 클라이언트) |
+| `42_first_class_functions.ezy` | 함수 값, 람다, 클로저, map/filter/reduce |

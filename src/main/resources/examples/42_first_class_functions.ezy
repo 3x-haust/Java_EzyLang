@@ -1,0 +1,47 @@
+// 함수 값, 람다, 클로저
+// 함수는 변수에 담고, 인자로 넘기고, 반환할 수 있다
+
+func add(a: number, b: number): number {
+    return a + b
+}
+
+// 이름 있는 함수를 값으로 사용
+plus: func = add
+println("plus(2, 3) = ${plus(2, 3)}")
+
+// 람다: func(매개변수): 반환타입 { ... }
+square: func = func(x: number): number { return x * x }
+
+nums: number[] = [1, 2, 3, 4, 5]
+println("제곱: ${nums.map(square)}")
+println("짝수: ${nums.filter(func(x: number): boolean { return x % 2 == 0 })}")
+println("합계: ${nums.reduce(add, 0)}")
+
+// 클로저: 정의된 위치의 변수를 기억한다
+func makeCounter(): func {
+    count: number = 0
+    return func(): number {
+        count += 1
+        return count
+    }
+}
+
+counter: func = makeCounter()
+counter()
+counter()
+println("카운터: ${counter()}")
+
+// 함수를 반환하는 함수
+func adder(n: number): func {
+    return func(x: number): number { return x + n }
+}
+println("adder(10)(5) = ${adder(10)(5)}")
+
+// 렉시컬 스코프: 호출한 쪽의 지역변수는 보이지 않는다
+secret: string = "전역"
+func readSecret(): string { return secret }
+func caller(): string {
+    secret: string = "지역"
+    return readSecret()
+}
+println("readSecret() = ${caller()}")

@@ -14,7 +14,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class Main {
-    public static void main(String[] args) {
+    private static final long INTERPRETER_STACK_SIZE = 1L << 30;
+
+    public static void main(String[] args) throws InterruptedException {
+        Thread worker = new Thread(null, () -> run(args), "ezylang-main", INTERPRETER_STACK_SIZE);
+        worker.setUncaughtExceptionHandler((thread, error) -> {
+            String message = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+            System.err.println("error: " + message);
+            System.exit(1);
+        });
+        worker.start();
+        worker.join();
+    }
+
+    private static void run(String[] args) {
         if (args.length < 1 || args.length > 2) {
             System.out.println("Usage: java -jar ezylang-<version>.jar [test] <source file>");
             System.exit(1);
@@ -57,6 +70,13 @@ public class Main {
             System.exit(1);
         } catch (ParseException e) {
             System.err.println(e.getFormattedMessage());
+            System.exit(1);
+        } catch (StackOverflowError e) {
+            System.err.println(fileName + ": error: Stack overflow: recursion too deep");
+            System.exit(1);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            System.err.println(fileName + ": error: " + message);
             System.exit(1);
         }
     }

@@ -51,6 +51,53 @@ public class Ast {
         R visitPropertyAssign(PropertyAssign propertyAssign) throws ParseException;
         R visitDecoratorDecl(DecoratorDecl decoratorDecl) throws ParseException;
         R visitEntryBlock(EntryBlock entryBlock) throws ParseException;
+        R visitChainedComparison(ChainedComparison chainedComparison) throws ParseException;
+        R visitFunctionExpr(FunctionExpr functionExpr) throws ParseException;
+        R visitCallExpr(CallExpr callExpr) throws ParseException;
+        R visitIndexExpr(IndexExpr indexExpr) throws ParseException;
+    }
+
+    @Getter
+    public static class IndexExpr extends Node {
+        private final Node target;
+        private final Node index;
+        public IndexExpr(Node target, Node index, int line, int column) {
+            this.target = target; this.index = index;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitIndexExpr(this); }
+    }
+
+    @Getter
+    public static class ChainedComparison extends Node {
+        private final List<Node> operands;
+        private final List<Token> operators;
+        public ChainedComparison(List<Node> operands, List<Token> operators, int line, int column) {
+            this.operands = operands; this.operators = operators;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitChainedComparison(this); }
+    }
+
+    @Getter
+    public static class FunctionExpr extends Node {
+        private final FunctionDecl function;
+        public FunctionExpr(FunctionDecl function, int line, int column) {
+            this.function = function;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitFunctionExpr(this); }
+    }
+
+    @Getter
+    public static class CallExpr extends Node {
+        private final Node callee;
+        private final List<Node> arguments;
+        public CallExpr(Node callee, List<Node> arguments, int line, int column) {
+            this.callee = callee; this.arguments = arguments;
+            this.line = line; this.column = column;
+        }
+        @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitCallExpr(this); }
     }
 
     @Getter
@@ -86,9 +133,10 @@ public class Ast {
     public static class ConstantDecl extends Node {
         private final String identifier;
         private final Token type;
+        private final boolean isArray;
         private final Node value;
-        public ConstantDecl(String identifier, Token type, Node value, int line, int column) {
-            this.identifier = identifier; this.type = type; this.value = value;
+        public ConstantDecl(String identifier, Token type, boolean isArray, Node value, int line, int column) {
+            this.identifier = identifier; this.type = type; this.isArray = isArray; this.value = value;
             this.line = line; this.column = column;
         }
         @Override public <R> R accept(Visitor<R> visitor) throws ParseException { return visitor.visitConstantDecl(this); }
@@ -190,7 +238,7 @@ public class Ast {
                 for (Node element : elements) {
                     if (element instanceof Literal literalElement) {
                         if (!literalElement.getType().equals(firstElementType)) {
-                            throw new RuntimeException("Array elements must have the same type");
+                            return "mixed[]";
                         }
                     }
                 }

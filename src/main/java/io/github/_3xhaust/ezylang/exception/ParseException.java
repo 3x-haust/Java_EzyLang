@@ -16,7 +16,14 @@ public class ParseException extends Exception {
         this.errorLine = errorLine;
     }
 
+    public int getLine() {
+        return line;
+    }
+
     public String getFormattedMessage() {
+        if (line <= 0 || column <= 0) {
+            return String.format("%s: error: %s", fileName, errorMessage);
+        }
         return String.format("%s:%d:%d: error: %s\n%s\n%s^",
                 fileName, line, column, errorMessage, errorLine, " ".repeat(column - 1));
     }

@@ -1,5 +1,7 @@
 package io.github._3xhaust.interpreter.module;
 
+import io.github._3xhaust.interpreter.runtime.Num;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -7,15 +9,15 @@ import java.util.Map;
 public class ArrModule {
     public static void register(Map<String, NativeFunction> nativeFunctions) {
         nativeFunctions.put("range", args -> {
-            double start = (Double) args.get(0);
-            double end = (Double) args.get(1);
-            double step = args.size() > 2 ? (Double) args.get(2) : 1.0;
+            double start = ((Number) args.get(0)).doubleValue();
+            double end = ((Number) args.get(1)).doubleValue();
+            double step = args.size() > 2 ? ((Number) args.get(2)).doubleValue() : 1.0;
             List<Object> result = new ArrayList<>();
             for (double i = start; i <= end; i += step) result.add(i);
             return result;
         });
         nativeFunctions.put("fill", args -> {
-            int size = ((Double) args.get(0)).intValue();
+            int size = ((Number) args.get(0)).intValue();
             Object value = args.get(1);
             List<Object> result = new ArrayList<>();
             for (int i = 0; i < size; i++) result.add(value);
@@ -23,26 +25,29 @@ public class ArrModule {
         });
         nativeFunctions.put("sum", args -> {
             List<?> list = (List<?>) args.get(0);
-            double sum = 0;
-            for (Object item : list) sum += (Double) item;
+            Object sum = 0L;
+            for (Object item : list) sum = Num.add(sum, Num.norm(item));
             return sum;
         });
         nativeFunctions.put("avg", args -> {
             List<?> list = (List<?>) args.get(0);
-            double sum = 0;
-            for (Object item : list) sum += (Double) item;
-            return sum / list.size();
+            if (list.isEmpty()) throw new IllegalArgumentException("cannot average an empty array");
+            Object sum = 0L;
+            for (Object item : list) sum = Num.add(sum, Num.norm(item));
+            return Num.div(sum, (long) list.size());
         });
         nativeFunctions.put("arrMin", args -> {
             List<?> list = (List<?>) args.get(0);
+            if (list.isEmpty()) throw new IllegalArgumentException("empty array has no minimum");
             double min = Double.MAX_VALUE;
-            for (Object item : list) { double v = (Double) item; if (v < min) min = v; }
+            for (Object item : list) { double v = ((Number) item).doubleValue(); if (v < min) min = v; }
             return min;
         });
         nativeFunctions.put("arrMax", args -> {
             List<?> list = (List<?>) args.get(0);
+            if (list.isEmpty()) throw new IllegalArgumentException("empty array has no maximum");
             double max = -Double.MAX_VALUE;
-            for (Object item : list) { double v = (Double) item; if (v > max) max = v; }
+            for (Object item : list) { double v = ((Number) item).doubleValue(); if (v > max) max = v; }
             return max;
         });
         nativeFunctions.put("flatten", args -> {
@@ -69,8 +74,8 @@ public class ArrModule {
         });
         nativeFunctions.put("slice", args -> {
             List<?> list = (List<?>) args.get(0);
-            int start = ((Double) args.get(1)).intValue();
-            int end = args.size() > 2 ? ((Double) args.get(2)).intValue() : list.size();
+            int start = ((Number) args.get(1)).intValue();
+            int end = args.size() > 2 ? ((Number) args.get(2)).intValue() : list.size();
             return new ArrayList<>(list.subList(start, end));
         });
         nativeFunctions.put("count", args -> {

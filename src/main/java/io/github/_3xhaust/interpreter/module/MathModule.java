@@ -10,24 +10,24 @@ public class MathModule {
     }
 
     public static void register(Map<String, NativeFunction> nativeFunctions) {
-        nativeFunctions.put("sqrt", args -> Math.sqrt((Double) args.get(0)));
-        nativeFunctions.put("abs", args -> Math.abs((Double) args.get(0)));
-        nativeFunctions.put("pow", args -> Math.pow((Double) args.get(0), (Double) args.get(1)));
-        nativeFunctions.put("min", args -> Math.min((Double) args.get(0), (Double) args.get(1)));
-        nativeFunctions.put("max", args -> Math.max((Double) args.get(0), (Double) args.get(1)));
-        nativeFunctions.put("floor", args -> Math.floor((Double) args.get(0)));
-        nativeFunctions.put("ceil", args -> Math.ceil((Double) args.get(0)));
-        nativeFunctions.put("round", args -> (double) Math.round((Double) args.get(0)));
-        nativeFunctions.put("sin", args -> Math.sin((Double) args.get(0)));
-        nativeFunctions.put("cos", args -> Math.cos((Double) args.get(0)));
-        nativeFunctions.put("tan", args -> Math.tan((Double) args.get(0)));
-        nativeFunctions.put("asin", args -> Math.asin((Double) args.get(0)));
-        nativeFunctions.put("acos", args -> Math.acos((Double) args.get(0)));
-        nativeFunctions.put("atan", args -> Math.atan((Double) args.get(0)));
-        nativeFunctions.put("log", args -> Math.log((Double) args.get(0)));
-        nativeFunctions.put("log10", args -> Math.log10((Double) args.get(0)));
+        nativeFunctions.put("sqrt", args -> Math.sqrt(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("abs", args -> Math.abs(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("pow", args -> Math.pow(((Number) args.get(0)).doubleValue(), ((Number) args.get(1)).doubleValue()));
+        nativeFunctions.put("min", args -> Math.min(((Number) args.get(0)).doubleValue(), ((Number) args.get(1)).doubleValue()));
+        nativeFunctions.put("max", args -> Math.max(((Number) args.get(0)).doubleValue(), ((Number) args.get(1)).doubleValue()));
+        nativeFunctions.put("floor", args -> Math.floor(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("ceil", args -> Math.ceil(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("round", args -> (double) Math.round(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("sin", args -> Math.sin(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("cos", args -> Math.cos(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("tan", args -> Math.tan(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("asin", args -> Math.asin(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("acos", args -> Math.acos(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("atan", args -> Math.atan(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("log", args -> Math.log(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("log10", args -> Math.log10(((Number) args.get(0)).doubleValue()));
         nativeFunctions.put("random", args -> Math.random());
-        nativeFunctions.put("toRadians", args -> Math.toRadians((Double) args.get(0)));
-        nativeFunctions.put("toDegrees", args -> Math.toDegrees((Double) args.get(0)));
+        nativeFunctions.put("toRadians", args -> Math.toRadians(((Number) args.get(0)).doubleValue()));
+        nativeFunctions.put("toDegrees", args -> Math.toDegrees(((Number) args.get(0)).doubleValue()));
     }
 }

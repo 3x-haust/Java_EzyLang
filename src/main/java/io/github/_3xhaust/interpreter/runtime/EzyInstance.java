@@ -68,11 +68,7 @@ public class EzyInstance {
     }
 
     private String formatValue(Object value) {
-        if (value instanceof Double d) {
-            if (d == Math.floor(d) && !Double.isInfinite(d) && Math.abs(d) < 1e15) {
-                return String.valueOf(d.longValue());
-            }
-        }
+        if (Num.isNumber(value)) return Num.format(value);
         if (value instanceof String) return "\"" + value + "\"";
         return String.valueOf(value);
     }

@@ -40,7 +40,7 @@ public class HttpModule {
         });
 
         nativeFunctions.put("serve", args -> {
-            int port = ((Double) args.get(0)).intValue();
+            int port = ((Number) args.get(0)).intValue();
             try {
                 HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
                 for (Map.Entry<String, Map<String, String>> routeEntry : routes.entrySet()) {
