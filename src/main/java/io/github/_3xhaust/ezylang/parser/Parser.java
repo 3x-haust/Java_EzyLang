@@ -4,6 +4,7 @@ import io.github._3xhaust.ezylang.ast.Ast.*;
 import io.github._3xhaust.ezylang.exception.ParseException;
 import io.github._3xhaust.ezylang.lexer.Lexer;
 import io.github._3xhaust.ezylang.lexer.Token;
+import io.github._3xhaust.interpreter.runtime.Num;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,7 @@ public class Parser {
     public Program parse() throws ParseException {
         List<Node> statements = new ArrayList<>();
         while (!isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             statements.add(parseStatement());
         }
 
@@ -57,67 +59,9 @@ public class Parser {
         if (match(Token.TokenType.FUNC)) {
             return parseFunctionDecl(false, false, new ArrayList<>());
         }
-        if (match(Token.TokenType.IDENTIFIER)) {
-            Token identifierToken = previous();
-            if (match(Token.TokenType.LEFT_BRACKET)) {
-                Node index = parseExpression();
-                consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
-                Node target = new ArrayAccess(identifierToken.getValue(), index, identifierToken.getLine(), identifierToken.getColumn());
-
-                if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL,
-                        Token.TokenType.MINUS_EQUAL, Token.TokenType.ASTERISK_EQUAL,
-                        Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
-                    Token operator = previous();
-                    Node value = parseExpression();
-                    return new AssignmentStatement(target, operator, value, target.getLine(), target.getColumn());
-                } else {
-                    return new ExpressionStatement(target, target.getLine(), target.getColumn());
-                }
-            } else if (check(Token.TokenType.LEFT_PAREN)) {
-                return parseFunctionCall();
-            } else if (match(Token.TokenType.DOT)) {
-                Token memberToken = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
-
-                if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL, Token.TokenType.MINUS_EQUAL,
-                        Token.TokenType.ASTERISK_EQUAL, Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
-                    Token operator = previous();
-                    Node value = parseExpression();
-                    Node obj = new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn());
-                    return new PropertyAssign(obj, memberToken.getValue(), operator, value, identifierToken.getLine(), identifierToken.getColumn());
-                }
-
-                if (match(Token.TokenType.LEFT_PAREN)) {
-                    List<Node> arguments = new ArrayList<>();
-                    if (!check(Token.TokenType.RIGHT_PAREN)) {
-                        do {
-                            arguments.add(parseExpression());
-                        } while (match(Token.TokenType.COMMA));
-                    }
-                    consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
-                    Node methodCall = new MethodCall(identifierToken.getValue(), memberToken.getValue(), arguments, null, identifierToken.getLine(), identifierToken.getColumn());
-                    return new ExpressionStatement(methodCall, methodCall.getLine(), methodCall.getColumn());
-                }
-
-                Node propAccess = new PropertyAccess(
-                        new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn()),
-                        memberToken.getValue(), memberToken.getLine(), memberToken.getColumn());
-                return new ExpressionStatement(propAccess, identifierToken.getLine(), identifierToken.getColumn());
-            } else if (check(Token.TokenType.COLON)) {
-                return parseVariableDecl(false);
-            } else if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL,
-                    Token.TokenType.MINUS_EQUAL, Token.TokenType.ASTERISK_EQUAL,
-                    Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
-                Token operator = previous();
-                Node value = parseExpression();
-                Node target = new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn());
-                return new AssignmentStatement(target, operator, value, target.getLine(), target.getColumn());
-            } else if (match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
-                Token operator = previous();
-                Node target = new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn());
-                return new IncrementDecrementExpr(target, operator, false, target.getLine(), target.getColumn());
-            } else {
-                return new ExpressionStatement(new Identifier(identifierToken.getValue(), identifierToken.getLine(), identifierToken.getColumn()), identifierToken.getLine(), identifierToken.getColumn());
-            }
+        if (check(Token.TokenType.IDENTIFIER) && checkNext(Token.TokenType.COLON)) {
+            advance();
+            return parseVariableDecl(false);
         }
         if (match(Token.TokenType.DOLLAR)) {
             return parseVariableDecl(true);
@@ -156,7 +100,24 @@ public class Parser {
         }
 
         Node expr = parseExpression();
+        if (match(Token.TokenType.EQUAL, Token.TokenType.PLUS_EQUAL, Token.TokenType.MINUS_EQUAL,
+                Token.TokenType.ASTERISK_EQUAL, Token.TokenType.SLASH_EQUAL, Token.TokenType.PERCENT_EQUAL)) {
+            Token operator = previous();
+            Node value = parseExpression();
+            if (expr instanceof Identifier || expr instanceof ArrayAccess || expr instanceof IndexExpr) {
+                return new AssignmentStatement(expr, operator, value, expr.getLine(), expr.getColumn());
+            }
+            if (expr instanceof PropertyAccess property) {
+                return new PropertyAssign(property.getObject(), property.getProperty(), operator, value, expr.getLine(), expr.getColumn());
+            }
+            throw new ParseException(fileName, "Invalid assignment target", operator.getLine(), operator.getColumn(), getErrorLine(operator.getLine()));
+        }
         return new ExpressionStatement(expr, expr.getLine(), expr.getColumn());
+    }
+
+    private boolean checkNext(Token.TokenType type) {
+        if (current + 1 >= tokens.size()) return false;
+        return tokens.get(current + 1).getToken() == type;
     }
 
     private Node parseImportStatement() throws ParseException {
@@ -195,12 +156,75 @@ public class Parser {
 
     private Node parseReturnStatement() throws ParseException {
         Token returnToken = previous();
+        if (isAtEnd() || check(Token.TokenType.RIGHT_BRACE) || peek().getLine() != returnToken.getLine()) {
+            return new ReturnStatement(null, returnToken.getLine(), returnToken.getColumn());
+        }
         Node value = parseExpression();
         return new ReturnStatement(value, returnToken.getLine(), returnToken.getColumn());
     }
 
+    private boolean onSameLine() {
+        return current > 0 && !isAtEnd() && peek().getLine() == previous().getLine();
+    }
+
+    private boolean isAssignableTarget(Node node) {
+        return node instanceof Identifier || node instanceof ArrayAccess || node instanceof IndexExpr
+                || node instanceof PropertyAccess || (node instanceof SelfExpr self && self.getFieldName() != null);
+    }
+
+    private Node parsePostfixIncrement(Node expr) {
+        if (isAssignableTarget(expr) && onSameLine() && match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
+            Token operator = previous();
+            return new IncrementDecrementExpr(expr, operator, false, operator.getLine(), operator.getColumn());
+        }
+        return expr;
+    }
+
+    private Node parseCallSuffix(Node callee) throws ParseException {
+        Node expr = callee;
+        while (true) {
+            if (check(Token.TokenType.LEFT_PAREN) && onSameLine()) {
+                Token paren = advance();
+                List<Node> arguments = new ArrayList<>();
+                if (!check(Token.TokenType.RIGHT_PAREN)) {
+                    do {
+                        arguments.add(parseExpression());
+                    } while (match(Token.TokenType.COMMA));
+                }
+                consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                expr = new CallExpr(expr, arguments, paren.getLine(), paren.getColumn());
+            } else if (check(Token.TokenType.LEFT_BRACKET) && onSameLine()) {
+                Token bracket = advance();
+                Node index = parseExpression();
+                consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
+                expr = new IndexExpr(expr, index, bracket.getLine(), bracket.getColumn());
+            } else if (check(Token.TokenType.DOT)) {
+                advance();
+                Token member = consume(Token.TokenType.IDENTIFIER, "Expected member name after '.'");
+                if (match(Token.TokenType.LEFT_PAREN)) {
+                    List<Node> arguments = new ArrayList<>();
+                    if (!check(Token.TokenType.RIGHT_PAREN)) {
+                        do {
+                            arguments.add(parseExpression());
+                        } while (match(Token.TokenType.COMMA));
+                    }
+                    consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
+                    expr = new MethodCall(null, member.getValue(), arguments, expr, member.getLine(), member.getColumn());
+                } else {
+                    expr = new PropertyAccess(expr, member.getValue(), member.getLine(), member.getColumn());
+                }
+            } else {
+                return expr;
+            }
+        }
+    }
+
     private Node parseFunctionDecl(boolean isMemo, boolean isOverride, List<Decorator> decorators) throws ParseException {
         String name = consume(Token.TokenType.IDENTIFIER, "Expected function name").getValue();
+        return parseFunctionRest(name, isMemo, isOverride, decorators);
+    }
+
+    private FunctionDecl parseFunctionRest(String name, boolean isMemo, boolean isOverride, List<Decorator> decorators) throws ParseException {
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after function name");
 
         List<String> paramNames = new ArrayList<>();
@@ -232,22 +256,6 @@ public class Parser {
         return new FunctionDecl(name, paramNames, paramTypes, isArrayTypes, returnType, isReturnArray, isMemo, isOverride, decorators, body, previous().getLine(), previous().getColumn());
     }
 
-    private Node parseFunctionCall() throws ParseException {
-        Token nameToken = previous();
-        String name = nameToken.getValue();
-        consume(Token.TokenType.LEFT_PAREN, "Expected '(' after function name");
-
-        List<Node> arguments = new ArrayList<>();
-        if (!check(Token.TokenType.RIGHT_PAREN)) {
-            do {
-                arguments.add(parseExpression());
-            } while (match(Token.TokenType.COMMA));
-        }
-        consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
-
-        return new FunctionCall(name, arguments, nameToken.getLine(), nameToken.getColumn());
-    }
-
     private Node parseSwitchStatement() throws ParseException {
         Token switchToken = previous();
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after 'switch'");
@@ -257,8 +265,10 @@ public class Parser {
 
         List<SwitchCase> cases = new ArrayList<>();
         Node defaultCase = null;
+        int defaultIndex = -1;
 
         while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             if (match(Token.TokenType.CASE)) {
                 Node value = parseExpression();
 
@@ -285,6 +295,7 @@ public class Parser {
                 }
 
                 consume(Token.TokenType.COLON, "Expected ':' after 'default'");
+                defaultIndex = cases.size();
 
                 if (match(Token.TokenType.LEFT_BRACE)) {
                     defaultCase = parseBlock();
@@ -297,13 +308,14 @@ public class Parser {
         }
 
         consume(Token.TokenType.RIGHT_BRACE, "Expected '}' after switch cases");
-        return new SwitchStatement(expression, cases, defaultCase, switchToken.getLine(), switchToken.getColumn());
+        return new SwitchStatement(expression, cases, defaultCase, defaultIndex, switchToken.getLine(), switchToken.getColumn());
     }
 
     private Node parseBlock() throws ParseException {
         List<Node> statements = new ArrayList<>();
 
         while (!check(Token.TokenType.RIGHT_BRACE) && !isAtEnd()) {
+            if (match(Token.TokenType.SEMICOLON)) continue;
             statements.add(parseStatement());
         }
 
@@ -323,28 +335,23 @@ public class Parser {
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after 'for'");
         String identifier = consume(Token.TokenType.IDENTIFIER, "Expected identifier").getValue();
         consume(Token.TokenType.COLON, "Expected ':' after identifier");
-        Token type = peek();
-        advance();
+        Token type = advance();
+        isArrayType();
 
         consume(Token.TokenType.IN, "Expected 'in' after type");
 
-        if (!match(Token.TokenType.IDENTIFIER)) {
-            Node start = parseExpression();
-            consume(Token.TokenType.DOT_DOT, "Expected '..' after start expression");
-            Node end = parseExpression();
-            Node step = null;
+        Node start = parseExpression();
+        Node end = null;
+        Node step = null;
+        if (match(Token.TokenType.DOT_DOT)) {
+            end = parseExpression();
             if (match(Token.TokenType.DOT_DOT)) {
                 step = parseExpression();
             }
-            consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after for expression");
-            Node body = parseStatement();
-            return new ForStatement(identifier, type, start, end, step, body, start.getLine(), start.getColumn());
         }
-
-        Node start = new Identifier(previous().getValue(), previous().getLine(), previous().getColumn());
         consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after for expression");
         Node body = parseStatement();
-        return new ForStatement(identifier, type, start, null, null, body, start.getLine(), start.getColumn());
+        return new ForStatement(identifier, type, start, end, step, body, start.getLine(), start.getColumn());
     }
 
     private Node parseTestBlock() throws ParseException {
@@ -369,6 +376,9 @@ public class Parser {
         Node thenBranch = parseStatement();
         Node elseBranch = null;
 
+        while (check(Token.TokenType.SEMICOLON) && checkNext(Token.TokenType.ELSE)) {
+            advance();
+        }
         if (match(Token.TokenType.ELSE)) {
             elseBranch = parseStatement();
         }
@@ -411,7 +421,7 @@ public class Parser {
 
         validateType(initializer, typeToken, isArray);
 
-        return isConstant ? new ConstantDecl(identifier, typeToken, initializer, typeToken.getLine(), typeToken.getColumn()) :
+        return isConstant ? new ConstantDecl(identifier, typeToken, isArray, initializer, typeToken.getLine(), typeToken.getColumn()) :
                 new VariableDecl(typeToken, identifier, isArray, initializer, constraint, typeToken.getLine(), typeToken.getColumn());
     }
 
@@ -426,7 +436,7 @@ public class Parser {
     private void validateType(Node initializer, Token typeToken, boolean isArray) throws ParseException {
         String expectedType = isArray ? typeToken.getValue() + "[]" : typeToken.getValue();
 
-        if (initializer instanceof ArrayLiteral arrayLiteral && !isValidArrayType(arrayLiteral, expectedType)) {
+        if (initializer instanceof ArrayLiteral arrayLiteral && !arrayLiteral.getElements().isEmpty() && !isValidArrayType(arrayLiteral, expectedType)) {
             throw new ParseException(
                     fileName,
                     "Type mismatch: expected " + expectedType + " but got " + arrayLiteral.getType(),
@@ -436,7 +446,7 @@ public class Parser {
             );
         }
 
-        if (initializer instanceof Literal literal && !literal.getType().equals(expectedType)) {
+        if (initializer instanceof Literal literal && !literalMatches(literal, expectedType)) {
             throw new ParseException(
                     fileName,
                     "Type mismatch: expected " + expectedType + " but got " + literal.getType(),
@@ -447,14 +457,30 @@ public class Parser {
         }
     }
 
+    private boolean literalMatches(Literal literal, String expectedType) {
+        String type = literal.getType();
+        if (type.equals("null") || expectedType.equals("any")) return true;
+        if (expectedType.equals("char")) return type.equals("string") && ((String) literal.getValue()).codePointCount(0, ((String) literal.getValue()).length()) == 1;
+        return type.equals(expectedType);
+    }
+
     private boolean isValidArrayType(ArrayLiteral arrayLiteral, String expectedType) {
-        return arrayLiteral.getType().equals(expectedType);
+        if (expectedType.equals("any") || expectedType.equals("any[]")) return true;
+        String type = arrayLiteral.getType();
+        if (type == null) return true;
+        if (expectedType.equals("char[]") && type.equals("string[]")) {
+            for (Node element : arrayLiteral.getElements()) {
+                if (element instanceof Literal literal && !literalMatches(literal, "char")) return false;
+            }
+            return true;
+        }
+        return type.equals(expectedType);
     }
 
     private Node parsePrintStatement() throws ParseException {
         boolean isPrintln = previous().getToken() == Token.TokenType.PRINTLN;
         consume(Token.TokenType.LEFT_PAREN, "Expected '(' after 'print'");
-        Node expression = parseStringInterpolation(parseExpression());
+        Node expression = parseExpression();
         consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after expression");
         return new PrintStatement(expression, isPrintln, expression.getLine(), expression.getColumn());
     }
@@ -466,91 +492,137 @@ public class Parser {
 
         String rawString = (String) literal.getValue();
         List<Node> interpolatedExpressions = new ArrayList<>();
-        StringBuilder baseString = new StringBuilder();
+        List<String> segments = new ArrayList<>();
+        StringBuilder segment = new StringBuilder();
 
-
-        int startIndex = 0;
-        while (true) {
-            int dollarIndex = rawString.indexOf("${", startIndex);
-
-            if (dollarIndex == -1) {
-                baseString.append(rawString.substring(startIndex));
-                break;
+        int i = 0;
+        while (i < rawString.length()) {
+            char ch = rawString.charAt(i);
+            if (ch != '$' || i + 1 >= rawString.length() || rawString.charAt(i + 1) != '{') {
+                segment.append(ch == Lexer.LITERAL_DOLLAR ? '$' : ch);
+                i++;
+                continue;
             }
 
-            baseString.append(rawString, startIndex, dollarIndex);
-
-            int endIndex = -1;
             int depth = 1;
-            boolean inNestedString = false;
-            for (int i = dollarIndex + 2; i < rawString.length(); i++) {
-                char ch = rawString.charAt(i);
-                if (ch == '"') {
-                    inNestedString = !inNestedString;
-                } else if (!inNestedString) {
-                    if (ch == '{') depth++;
-                    else if (ch == '}') {
-                        depth--;
-                        if (depth == 0) { endIndex = i; break; }
+            int j = i + 2;
+            char quote = 0;
+            while (j < rawString.length()) {
+                char c = rawString.charAt(j);
+                if (quote != 0) {
+                    if (c == '\\') {
+                        j += 2;
+                        continue;
                     }
+                    if (c == quote) quote = 0;
+                } else if (c == '"' || c == '\'') {
+                    quote = c;
+                } else if (c == '{') {
+                    depth++;
+                } else if (c == '}' && --depth == 0) {
+                    break;
                 }
+                j++;
             }
-            if (endIndex == -1) {
+            if (j >= rawString.length()) {
                 throw new ParseException(fileName, "Unclosed string interpolation expression", literal.getLine(), literal.getColumn(), getErrorLine(literal.getLine()));
             }
 
-            String expressionString = rawString.substring(dollarIndex + 2, endIndex).trim();
-
-
-            Lexer lexer = new Lexer(expressionString);
-            List<Token> tokens = lexer.scanTokens();
-            Parser parser = new Parser(this.fileName, expressionString, tokens);
-            Node parsedExpression = parser.parseExpression();
-
-            interpolatedExpressions.add(parsedExpression);
-
-            startIndex = endIndex + 1;
+            String expressionString = rawString.substring(i + 2, j).trim();
+            if (expressionString.isEmpty()) {
+                throw new ParseException(fileName, "Empty string interpolation expression", literal.getLine(), literal.getColumn(), getErrorLine(literal.getLine()));
+            }
+            Parser parser = new Parser(this.fileName, expressionString, new Lexer(expressionString).scanTokens());
+            interpolatedExpressions.add(parser.parseStandaloneExpression());
+            segments.add(segment.toString());
+            segment.setLength(0);
+            i = j + 1;
         }
+        segments.add(segment.toString());
 
         if (interpolatedExpressions.isEmpty()) {
-            return expression;
-        } else {
-            return new InterpolatedString(rawString, baseString.toString(), interpolatedExpressions, expression.getLine(), expression.getColumn());
+            return new Literal(segments.get(0), "string", literal.getLine(), literal.getColumn());
         }
+        return new InterpolatedString(rawString, String.join("", segments), interpolatedExpressions, segments, literal.getLine(), literal.getColumn());
+    }
+
+    public Node parseStandaloneExpression() throws ParseException {
+        Node expr = parseExpression();
+        if (!isAtEnd()) {
+            throw new ParseException(fileName, "Unexpected token after expression", peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));
+        }
+        return expr;
     }
 
     private Node parseExpression() throws ParseException {
-        return parseBinaryExpression();
+        return parseOr();
     }
 
-    private Node parseBinaryExpression() throws ParseException {
-        Node left = parseUnaryExpression();
-
-        while (match(Token.TokenType.PLUS, Token.TokenType.MINUS, Token.TokenType.ASTERISK,
-                Token.TokenType.SLASH, Token.TokenType.PERCENT, Token.TokenType.EQUAL_EQUAL,
-                Token.TokenType.NOT_EQUAL, Token.TokenType.LESS_THAN, Token.TokenType.GREATER_THAN,
-                Token.TokenType.LESS_THAN_OR_EQUAL, Token.TokenType.GREATER_THAN_OR_EQUAL,
-                Token.TokenType.AND, Token.TokenType.OR, Token.TokenType.IS, Token.TokenType.AS)) {
+    private Node parseOr() throws ParseException {
+        Node left = parseAnd();
+        while (match(Token.TokenType.OR)) {
             Token operator = previous();
-            if (operator.getToken() == Token.TokenType.IS) {
-                Token type = peek();
-                advance();
-                left = new TypeCheckExpr(left, type, left.getLine(), left.getColumn());
-            } else if (operator.getToken() == Token.TokenType.AS) {
-                Token type = peek();
-                advance();
-                left = new TypeCastExpr(left, type, left.getLine(), left.getColumn());
-            } else if (isComparisonOperator(operator) && left instanceof BinaryExpr prevBinary && isComparisonOperator(prevBinary.getOperator())) {
-                Node right = parseUnaryExpression();
-                Node chainedRight = new BinaryExpr(prevBinary.getRight(), operator, right, operator.getLine(), operator.getColumn());
-                Token andToken = new Token(Token.TokenType.AND, "&&", operator.getLine(), operator.getColumn());
-                left = new BinaryExpr(left, andToken, chainedRight, left.getLine(), left.getColumn());
-            } else {
-                Node right = parseUnaryExpression();
-                left = new BinaryExpr(left, operator, right, left.getLine(), left.getColumn());
-            }
+            Node right = parseAnd();
+            left = new BinaryExpr(left, operator, right, left.getLine(), left.getColumn());
         }
+        return left;
+    }
 
+    private Node parseAnd() throws ParseException {
+        Node left = parseComparison();
+        while (match(Token.TokenType.AND)) {
+            Token operator = previous();
+            Node right = parseComparison();
+            left = new BinaryExpr(left, operator, right, left.getLine(), left.getColumn());
+        }
+        return left;
+    }
+
+    private Node parseComparison() throws ParseException {
+        Node left = parseCast();
+        List<Node> operands = new ArrayList<>();
+        List<Token> operators = new ArrayList<>();
+        operands.add(left);
+        while (!isAtEnd() && isComparisonOperator(peek())) {
+            operators.add(advance());
+            operands.add(parseCast());
+        }
+        if (operators.isEmpty()) return left;
+        if (operators.size() == 1) {
+            return new BinaryExpr(left, operators.get(0), operands.get(1), left.getLine(), left.getColumn());
+        }
+        return new ChainedComparison(operands, operators, left.getLine(), left.getColumn());
+    }
+
+    private Node parseCast() throws ParseException {
+        Node left = parseAdditive();
+        while (match(Token.TokenType.IS, Token.TokenType.AS)) {
+            Token operator = previous();
+            Token type = advance();
+            left = operator.getToken() == Token.TokenType.IS
+                    ? new TypeCheckExpr(left, type, left.getLine(), left.getColumn())
+                    : new TypeCastExpr(left, type, left.getLine(), left.getColumn());
+        }
+        return left;
+    }
+
+    private Node parseAdditive() throws ParseException {
+        Node left = parseMultiplicative();
+        while (match(Token.TokenType.PLUS, Token.TokenType.MINUS)) {
+            Token operator = previous();
+            Node right = parseMultiplicative();
+            left = new BinaryExpr(left, operator, right, left.getLine(), left.getColumn());
+        }
+        return left;
+    }
+
+    private Node parseMultiplicative() throws ParseException {
+        Node left = parseUnaryExpression();
+        while (match(Token.TokenType.ASTERISK, Token.TokenType.SLASH, Token.TokenType.PERCENT)) {
+            Token operator = previous();
+            Node right = parseUnaryExpression();
+            left = new BinaryExpr(left, operator, right, left.getLine(), left.getColumn());
+        }
         return left;
     }
 
@@ -572,7 +644,7 @@ public class Parser {
             Token operator = previous();
             Node operand = parseUnaryExpression();
 
-            if (!(operand instanceof Identifier) && !(operand instanceof ArrayAccess)) {
+            if (!isAssignableTarget(operand)) {
                 throw new ParseException(fileName,
                         "Invalid operand for prefix " + (operator.getToken() == Token.TokenType.PLUS_PLUS ? "increment" : "decrement") + " operator",
                         operand.getLine(), operand.getColumn(), getErrorLine(operand.getLine()));
@@ -586,20 +658,31 @@ public class Parser {
 
     private Node parsePrimary() throws ParseException {
         if (match(Token.TokenType.NEW)) {
-            return parseNewExpr();
+            return parsePostfixIncrement(parseCallSuffix(parseNewExpr()));
         }
         if (match(Token.TokenType.SELF)) {
-            return parseSelfExpr();
+            return parsePostfixIncrement(parseCallSuffix(parseSelfExpr()));
         }
         if (match(Token.TokenType.PARENT)) {
             return parseParentExpr();
         }
         if (match(Token.TokenType.LEFT_BRACKET)) {
-            return parseArrayLiteral();
+            return parseCallSuffix(parseArrayLiteral());
+        }
+        if (match(Token.TokenType.LEFT_PAREN)) {
+            Node inner = parseExpression();
+            consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after expression");
+            return parsePostfixIncrement(parseCallSuffix(inner));
         }
         if (match(Token.TokenType.NUMBER_LITERAL)) {
             Token token = previous();
-            Node literal = new Literal(Double.parseDouble(token.getValue()), "number", token.getLine(), token.getColumn());
+            Object number;
+            try {
+                number = Num.parse(token.getValue());
+            } catch (NumberFormatException e) {
+                throw new ParseException(fileName, "Numeric literal out of range: " + token.getValue(), token.getLine(), token.getColumn(), getErrorLine(token.getLine()));
+            }
+            Node literal = new Literal(number, "number", token.getLine(), token.getColumn());
             if (match(Token.TokenType.DOT)) {
                 Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
                 consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
@@ -616,9 +699,7 @@ public class Parser {
         }
         if (match(Token.TokenType.STRING_LITERAL)) {
             Token token = previous();
-            Node literal = token.getValue().length() == 1 ?
-                    new Literal(token.getValue().charAt(0), "char", token.getLine(), token.getColumn()) :
-                    parseStringInterpolation(new Literal(token.getValue(), "string", token.getLine(), token.getColumn()));
+            Node literal = parseStringInterpolation(new Literal(token.getValue(), "string", token.getLine(), token.getColumn()));
             if (match(Token.TokenType.DOT)) {
                 Token methodToken = consume(Token.TokenType.IDENTIFIER, "Expected method name after '.'");
                 consume(Token.TokenType.LEFT_PAREN, "Expected '(' after method name");
@@ -632,6 +713,15 @@ public class Parser {
                 return new MethodCall(null, methodToken.getValue(), arguments, literal, token.getLine(), token.getColumn());
             }
             return literal;
+        }
+        if (match(Token.TokenType.NULL)) {
+            Token token = previous();
+            return new Literal(null, "null", token.getLine(), token.getColumn());
+        }
+        if (match(Token.TokenType.FUNC)) {
+            Token token = previous();
+            FunctionDecl function = parseFunctionRest("<lambda>", false, false, new ArrayList<>());
+            return parseCallSuffix(new FunctionExpr(function, token.getLine(), token.getColumn()));
         }
         if (match(Token.TokenType.BOOLEAN_LITERAL)) {
             Token token = previous();
@@ -653,7 +743,8 @@ public class Parser {
         if (match(Token.TokenType.IDENTIFIER)) {
             Token token = previous();
             Node expr;
-            if (match(Token.TokenType.LEFT_PAREN)) {
+            if (check(Token.TokenType.LEFT_PAREN) && onSameLine()) {
+                advance();
                 List<Node> arguments = new ArrayList<>();
                 if (!check(Token.TokenType.RIGHT_PAREN)) {
                     do {
@@ -662,7 +753,8 @@ public class Parser {
                 }
                 consume(Token.TokenType.RIGHT_PAREN, "Expected ')' after arguments");
                 expr = new FunctionCall(token.getValue(), arguments, token.getLine(), token.getColumn());
-            } else if (match(Token.TokenType.LEFT_BRACKET)) {
+            } else if (check(Token.TokenType.LEFT_BRACKET) && onSameLine()) {
+                advance();
                 Node index = parseExpression();
                 consume(Token.TokenType.RIGHT_BRACKET, "Expected ']' after index expression");
                 expr = new ArrayAccess(token.getValue(), index, token.getLine(), token.getColumn());
@@ -700,17 +792,8 @@ public class Parser {
                 expr = new Identifier(token.getValue(), token.getLine(), token.getColumn());
             }
 
-            if (match(Token.TokenType.PLUS_PLUS, Token.TokenType.MINUS_MINUS)) {
-                Token operator = previous();
-                if (!(expr instanceof Identifier) && !(expr instanceof ArrayAccess)) {
-                    throw new ParseException(fileName,
-                            "Invalid operand for postfix " + (operator.getToken() == Token.TokenType.PLUS_PLUS ? "increment" : "decrement") + " operator",
-                            expr.getLine(), expr.getColumn(), getErrorLine(expr.getLine()));
-                }
-                return new IncrementDecrementExpr(expr, operator, false, operator.getLine(), operator.getColumn());
-            }
-
-            return expr;
+            expr = parseCallSuffix(expr);
+            return parsePostfixIncrement(expr);
         }
 
         throw new ParseException(fileName, "Expected expression", peek().getLine(), peek().getColumn(), getErrorLine(peek().getLine()));

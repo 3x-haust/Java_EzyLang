@@ -14,7 +14,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class Main {
-    public static void main(String[] args) {
+    private static final long INTERPRETER_STACK_SIZE = 1L << 28;
+
+    public static void main(String[] args) throws InterruptedException {
+        Thread worker = new Thread(null, () -> run(args), "ezylang-main", INTERPRETER_STACK_SIZE);
+        worker.setUncaughtExceptionHandler((thread, error) -> {
+            String message = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+            System.err.println("error: " + message);
+            System.exit(1);
+        });
+        worker.start();
+        worker.join();
+    }
+
+    private static void run(String[] args) {
         if (args.length < 1 || args.length > 2) {
             System.out.println("Usage: java -jar ezylang-<version>.jar [test] <source file>");
             System.exit(1);
@@ -35,7 +48,8 @@ public class Main {
         }
 
         try {
-            if (!fileName.endsWith(".ezy")) throw new IOException("Invalid file extension: Must be '.ezy'");
+            if (!fileName.endsWith(".ezy")) throw new IOException("invalid file extension: must be '.ezy'");
+            if (!java.nio.file.Files.isRegularFile(java.nio.file.Path.of(fileName))) throw new IOException("file not found");
 
             String input = readFile(fileName);
             Lexer lexer = new Lexer(input);
@@ -53,10 +67,17 @@ public class Main {
                 if (interpreter.getTestsFailed() > 0) System.exit(1);
             }
         } catch (IOException e) {
-            System.err.println(e.getMessage());
+            System.err.println(fileName + ": error: " + e.getMessage());
             System.exit(1);
         } catch (ParseException e) {
             System.err.println(e.getFormattedMessage());
+            System.exit(1);
+        } catch (StackOverflowError e) {
+            System.err.println(fileName + ": error: Stack overflow: recursion too deep");
+            System.exit(1);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            System.err.println(fileName + ": error: " + message);
             System.exit(1);
         }
     }

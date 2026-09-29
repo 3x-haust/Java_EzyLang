@@ -16,6 +16,7 @@ public class EzyClass {
     private final List<ClassField> fields;
     private final Map<String, FunctionDecl> methods = new HashMap<>();
     private final List<Decorator> decorators;
+    private Object owner;
 
     public EzyClass(String name, List<ClassField> constructorParams, EzyClass parentClass,
                     List<String> interfaces, List<ClassField> fields, List<FunctionDecl> methods,
@@ -38,6 +39,19 @@ public class EzyClass {
     public List<ClassField> getFields() { return fields; }
     public Map<String, FunctionDecl> getMethods() { return methods; }
     public List<Decorator> getDecorators() { return decorators; }
+    public Object getOwner() { return owner; }
+    public void setOwner(Object owner) { this.owner = owner; }
+
+    public EzyClass findDeclaringClass(String name) {
+        if (methods.containsKey(name)) return this;
+        if (parentClass != null) return parentClass.findDeclaringClass(name);
+        return null;
+    }
+
+    public boolean hasDecoratorInHierarchy(String name) {
+        if (hasDecorator(name)) return true;
+        return parentClass != null && parentClass.hasDecoratorInHierarchy(name);
+    }
 
     public FunctionDecl findMethod(String name) {
         FunctionDecl method = methods.get(name);

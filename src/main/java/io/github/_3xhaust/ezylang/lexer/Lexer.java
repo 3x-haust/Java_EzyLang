@@ -47,6 +47,8 @@ public class Lexer {
         keywords.put("entry", Token.TokenType.ENTRY);
     }
 
+    public static final char LITERAL_DOLLAR = '\uE000';
+
     private final String source;
     private final List<Token> tokens = new ArrayList<>();
     private int start = 0;
@@ -85,6 +87,9 @@ public class Lexer {
             case '.' -> {
                 if (match('.')) {
                     addToken(Token.TokenType.DOT_DOT);
+                } else if (isDigit(peek()) && !followsValue()) {
+                    while (isDigit(peek())) advance();
+                    addToken(Token.TokenType.NUMBER_LITERAL, "0" + source.substring(start, current));
                 } else {
                     addToken(Token.TokenType.DOT);
                 }
@@ -244,14 +249,29 @@ public class Lexer {
             if (c == '\\') {
                 if (isAtEnd()) throw new RuntimeException("Unterminated string at line " + line + ", column " + column);
                 c = advance();
+                if (braceDepth > 0) {
+                    value.append('\\').append(c);
+                    continue;
+                }
                 switch (c) {
                     case 'n' -> value.append('\n');
                     case 't' -> value.append('\t');
                     case '\\' -> value.append('\\');
                     case '"' -> value.append('\"');
+                    case '\'' -> value.append('\'');
+                    case '$' -> value.append(LITERAL_DOLLAR);
                     default ->
                             throw new RuntimeException("Invalid escape sequence at line " + line + ", column " + column);
                 }
+            } else if (braceDepth > 0 && (c == '"' || c == '\'')) {
+                value.append(c);
+                char quote = c;
+                while (!isAtEnd() && peek() != quote && peek() != '\n') {
+                    char inner = advance();
+                    value.append(inner);
+                    if (inner == '\\' && !isAtEnd()) value.append(advance());
+                }
+                if (!isAtEnd() && peek() == quote) value.append(advance());
             } else if (c == '$' && peek() == '{') {
                 value.append(c);
                 value.append(advance());
@@ -262,8 +282,6 @@ public class Lexer {
             } else if (c == '}' && braceDepth > 0) {
                 value.append(c);
                 braceDepth--;
-            } else if (c == '"' && braceDepth > 0) {
-                value.append(c);
             } else {
                 value.append(c);
             }
@@ -279,26 +297,39 @@ public class Lexer {
     }
 
     private void charLiteral() {
-        if (peek() == '\\') {
-            advance();
+        StringBuilder value = new StringBuilder();
+        while (!isAtEnd() && peek() != '\'' && peek() != '\n') {
             char c = advance();
-
-            switch (c) {
-                case 'n' -> addToken(Token.TokenType.CHAR_LITERAL, "\n");
-                case 't' -> addToken(Token.TokenType.CHAR_LITERAL, "\t");
-                case '\\' -> addToken(Token.TokenType.CHAR_LITERAL, "\\");
-                case '\'' -> addToken(Token.TokenType.CHAR_LITERAL, "'");
-                default -> throw new RuntimeException("Invalid escape sequence at line " + line + ", column " + column);
+            if (c == '\\') {
+                char escaped = advance();
+                switch (escaped) {
+                    case 'n' -> value.append('\n');
+                    case 't' -> value.append('\t');
+                    case '\\' -> value.append('\\');
+                    case '\'' -> value.append('\'');
+                    case '"' -> value.append('"');
+                    case '$' -> value.append(LITERAL_DOLLAR);
+                    default -> throw new RuntimeException("Invalid escape sequence at line " + line + ", column " + column);
+                }
+            } else {
+                value.append(c);
             }
-        } else {
-            advance();
         }
 
-        if (peek() != '\'') {
+        if (isAtEnd() || peek() != '\'') {
             throw new RuntimeException("Unterminated character literal at line " + line + ", column " + column);
         }
 
         advance();
+        addToken(Token.TokenType.STRING_LITERAL, value.toString());
+    }
+
+    private boolean followsValue() {
+        if (tokens.isEmpty()) return false;
+        Token.TokenType last = tokens.get(tokens.size() - 1).getToken();
+        return last == Token.TokenType.IDENTIFIER || last == Token.TokenType.RIGHT_PAREN
+                || last == Token.TokenType.RIGHT_BRACKET || last == Token.TokenType.NUMBER_LITERAL
+                || last == Token.TokenType.STRING_LITERAL;
     }
 
 
@@ -309,6 +340,13 @@ public class Lexer {
 
             do advance();
             while (isDigit(peek()));
+        }
+
+        if ((peek() == 'e' || peek() == 'E')
+                && (isDigit(peekNext()) || ((peekNext() == '+' || peekNext() == '-') && current + 2 < source.length() && isDigit(source.charAt(current + 2))))) {
+            advance();
+            if (peek() == '+' || peek() == '-') advance();
+            while (isDigit(peek())) advance();
         }
 
         addToken(Token.TokenType.NUMBER_LITERAL,
@@ -345,7 +383,8 @@ public class Lexer {
     private boolean isAlpha(char c) {
         return (c >= 'a' && c <= 'z') ||
                 (c >= 'A' && c <= 'Z') ||
-                c == '_';
+                c == '_' ||
+                (c > 127 && Character.isLetter(c));
     }
 
     private boolean isAlphaNumeric(char c) {
